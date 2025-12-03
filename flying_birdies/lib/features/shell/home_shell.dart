@@ -1,8 +1,15 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 import '../../app/theme.dart';
 import '../../widgets/glass_widgets.dart';
+import '../../core/interfaces/i_swing_repository.dart';
+import '../../core/interfaces/i_session_repository.dart';
+import '../../core/interfaces/i_sync_service.dart';
+import '../../state/connection_state_notifier.dart';
+import '../../state/session_state_notifier.dart';
 
 import '../Train/train_tab.dart';
 import '../history/history_tab.dart';
@@ -19,21 +26,24 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
-  bool _isConnected = false;
-  BleDevice? _device;
+  // Real stats
+  int _weekSessions = 0;
+  double _weekAvgSpeed = 0;
+  double _weekAvgForce = 0;
+  int _currentStreak = 0;
+  bool _loadingStats = true;
 
   Future<void> _openConnectSheet() async {
     final result = await showConnectSheet(context);
     if (result != null) {
-      setState(() {
-        _isConnected = true;
-        _device = result;
-      });
+      // Connection state is now managed by ConnectionStateNotifier
+      // The connect sheet should update the notifier
     }
   }
 
   void _handlePrimaryCta() {
-    if (_isConnected) {
+    final connectionNotifier = context.read<ConnectionStateNotifier>();
+    if (connectionNotifier.isConnected) {
       setState(() => _index = 1); // Train tab
     } else {
       _openConnectSheet();
@@ -47,8 +57,76 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _loadWeekStats();
+
+    // Listen for session state changes
+    final sessionNotifier = context.read<SessionStateNotifier>();
+    sessionNotifier.addListener(_onSessionsChanged);
+
+    // Listen for connection state changes
+    final connectionNotifier = context.read<ConnectionStateNotifier>();
+    connectionNotifier.addListener(_onConnectionChanged);
+  }
+
+  @override
+  void dispose() {
+    final sessionNotifier = context.read<SessionStateNotifier>();
+    sessionNotifier.removeListener(_onSessionsChanged);
+
+    final connectionNotifier = context.read<ConnectionStateNotifier>();
+    connectionNotifier.removeListener(_onConnectionChanged);
+
+    super.dispose();
+  }
+
+  void _onSessionsChanged() {
+    // Reload stats when sessions change
+    _loadWeekStats();
+  }
+
+  void _onConnectionChanged() {
+    // Trigger rebuild when connection state changes
+    setState(() {});
+  }
+
+  Future<void> _loadWeekStats() async {
+    try {
+      final swingRepo = context.read<ISwingRepository>();
+      final sessionRepo = context.read<ISessionRepository>();
+      final end = DateTime.now();
+      final start = end.subtract(const Duration(days: 7));
+
+      final statsMap = await swingRepo.getStatsInRange(start, end);
+      final sessions = await sessionRepo.getSessionsInRange(start, end);
+      final streak = await swingRepo.getCurrentStreak();
+
+      if (mounted) {
+        setState(() {
+          _weekSessions = sessions.length;
+          _weekAvgSpeed =
+              (statsMap['avg_vtip'] as double? ?? 0.0) * 3.6; // m/s to km/h
+          _weekAvgForce = statsMap['avg_force'] as double? ?? 0.0;
+          _currentStreak = streak;
+          _loadingStats = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load week stats: $e');
+      if (mounted) {
+        setState(() => _loadingStats = false);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final connectionNotifier = context.watch<ConnectionStateNotifier>();
+    final isConnected =
+        connectionNotifier.state == DeviceConnectionState.connected;
+    final deviceName = connectionNotifier.deviceName;
 
     return GradientBackground(
       child: Scaffold(
@@ -59,14 +137,19 @@ class _HomeShellState extends State<HomeShell> {
             index: _index,
             children: [
               _HomeTab(
-                isConnected: _isConnected,
-                deviceName: _device?.name,
+                isConnected: isConnected,
+                deviceName: deviceName,
                 onOpenConnect: _openConnectSheet,
                 onPrimaryCta: _handlePrimaryCta,
                 onGoToHistory: _goToHistory,
                 onOpenProfile: _openProfile,
+                weekSessions: _weekSessions,
+                weekAvgSpeed: _weekAvgSpeed,
+                weekAvgForce: _weekAvgForce,
+                currentStreak: _currentStreak,
+                loadingStats: _loadingStats,
               ),
-              TrainTab(deviceName: _device?.name),
+              TrainTab(deviceName: deviceName),
               const HistoryTab(),
               StatsTab(),
             ],
@@ -106,9 +189,7 @@ class _HomeShellState extends State<HomeShell> {
                       final sel = s.contains(WidgetState.selected);
                       return IconThemeData(
                         color: sel
-                            ? (isDark
-                                ? Colors.white
-                                : AppTheme.seed)
+                            ? (isDark ? Colors.white : AppTheme.seed)
                             : (isDark
                                 ? Colors.white.withValues(alpha: .70)
                                 : Colors.black.withValues(alpha: .45)),
@@ -119,9 +200,7 @@ class _HomeShellState extends State<HomeShell> {
                       final sel = s.contains(WidgetState.selected);
                       return TextStyle(
                         color: sel
-                            ? (isDark
-                                ? Colors.white
-                                : AppTheme.seed)
+                            ? (isDark ? Colors.white : AppTheme.seed)
                             : (isDark
                                 ? Colors.white.withValues(alpha: .70)
                                 : Colors.black.withValues(alpha: .55)),
@@ -176,6 +255,11 @@ class _HomeTab extends StatelessWidget {
     required this.onGoToHistory,
     required this.onOpenProfile,
     required this.isConnected,
+    required this.weekSessions,
+    required this.weekAvgSpeed,
+    required this.weekAvgForce,
+    required this.currentStreak,
+    required this.loadingStats,
     this.deviceName,
   });
 
@@ -185,16 +269,18 @@ class _HomeTab extends StatelessWidget {
   final VoidCallback onOpenProfile;
   final bool isConnected;
   final String? deviceName;
+  final int weekSessions;
+  final double weekAvgSpeed;
+  final double weekAvgForce;
+  final int currentStreak;
+  final bool loadingStats;
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primaryTextColor =
-        isDark ? Colors.white : const Color(0xFF111827);
+    final primaryTextColor = isDark ? Colors.white : const Color(0xFF111827);
     final secondaryTextColor =
         isDark ? Colors.white.withValues(alpha: .70) : const Color(0xFF6B7280);
-    final mutedOnCard =
-        isDark ? Colors.white.withValues(alpha: .80) : const Color(0xFF4B5563);
 
     final subtitle = isConnected
         ? 'Connected to ${deviceName ?? 'your sensor'}'
@@ -217,8 +303,8 @@ class _HomeTab extends StatelessWidget {
                   colors: [Color(0xFFFF6FD8), Color(0xFF7E4AED)],
                 ),
               ),
-              child: const Icon(Icons.show_chart,
-                  size: 16, color: Colors.white),
+              child:
+                  const Icon(Icons.show_chart, size: 16, color: Colors.white),
             ),
             const SizedBox(width: 10),
             ShaderMask(
@@ -235,7 +321,13 @@ class _HomeTab extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            _IconChip(icon: Icons.bluetooth, onTap: onOpenConnect),
+            const _SyncStatusIndicator(),
+            const SizedBox(width: 8),
+            _BluetoothStatusChip(
+              isConnected: isConnected,
+              deviceName: deviceName,
+              onTap: onOpenConnect,
+            ),
             const SizedBox(width: 8),
             _IconChip(icon: Icons.person_outline, onTap: onOpenProfile),
           ],
@@ -365,9 +457,7 @@ class _HomeTab extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            color: isDark
-                ? Colors.black.withValues(alpha: 0.15)
-                : Colors.white,
+            color: isDark ? Colors.black.withValues(alpha: 0.15) : Colors.white,
             border: Border.all(
               color: isDark
                   ? Colors.white.withValues(alpha: .08)
@@ -398,9 +488,7 @@ class _HomeTab extends StatelessWidget {
                     ),
                     child: Icon(Icons.auto_graph_rounded,
                         size: 16,
-                        color: isDark
-                            ? Colors.white
-                            : const Color(0xFF111827)),
+                        color: isDark ? Colors.white : const Color(0xFF111827)),
                   ),
                   const SizedBox(width: 10),
                   Text(
@@ -453,19 +541,102 @@ class _HomeTab extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
-                  _StatTile(label: 'Sessions', value: '4'),
-                  _StatTile(label: 'Avg Speed', value: '265 km/h'),
-                  _StatTile(label: 'Avg Force', value: '74 N'),
-                  _StatTile(label: 'Streak', value: '3d'),
-                ],
-              ),
+              loadingStats
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator(),
+                      ),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _StatTile(label: 'Sessions', value: '$weekSessions'),
+                        _StatTile(
+                          label: 'Avg Speed',
+                          value: weekAvgSpeed > 0
+                              ? '${weekAvgSpeed.toStringAsFixed(0)} km/h'
+                              : '--',
+                        ),
+                        _StatTile(
+                          label: 'Avg Force',
+                          value: weekAvgForce > 0
+                              ? '${weekAvgForce.toStringAsFixed(0)} N'
+                              : '--',
+                        ),
+                        _StatTile(label: 'Streak', value: '${currentStreak}d'),
+                      ],
+                    ),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _BluetoothStatusChip extends StatelessWidget {
+  const _BluetoothStatusChip({
+    required this.isConnected,
+    this.deviceName,
+    this.onTap,
+  });
+
+  final bool isConnected;
+  final String? deviceName;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final color =
+        isConnected ? const Color(0xFF22C55E) : const Color(0xFFF97316);
+    final bg = isConnected
+        ? color.withValues(alpha: .16)
+        : (isDark
+            ? Colors.white.withValues(alpha: .08)
+            : Colors.white.withValues(alpha: .90));
+
+    return BounceTap(
+      onTap: onTap,
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isConnected
+                ? color.withValues(alpha: .6)
+                : (isDark
+                    ? Colors.white.withValues(alpha: .12)
+                    : Colors.black.withValues(alpha: .06)),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
+              size: 18,
+              color: isConnected
+                  ? color
+                  : (isDark ? Colors.white : const Color(0xFF111827)),
+            ),
+            if (isConnected && deviceName != null) ...[
+              const SizedBox(width: 6),
+              Text(
+                deviceName!,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -497,9 +668,7 @@ class _IconChip extends StatelessWidget {
         child: Icon(
           icon,
           size: 18,
-          color: isDark
-              ? Colors.white
-              : const Color(0xFF111827),
+          color: isDark ? Colors.white : const Color(0xFF111827),
         ),
       ),
     );
@@ -514,8 +683,7 @@ class _StatTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final valueColor =
-        isDark ? Colors.white : const Color(0xFF111827);
+    final valueColor = isDark ? Colors.white : const Color(0xFF111827);
     final labelColor =
         isDark ? Colors.white.withValues(alpha: .70) : const Color(0xFF6B7280);
 
@@ -535,6 +703,113 @@ class _StatTile extends StatelessWidget {
           style: TextStyle(color: labelColor, fontSize: 13),
         ),
       ],
+    );
+  }
+}
+
+/// Sync status indicator widget
+class _SyncStatusIndicator extends StatelessWidget {
+  const _SyncStatusIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final syncService = context.watch<ISyncService>();
+
+    return StreamBuilder<SyncStatus>(
+      stream: syncService.syncStatusStream,
+      initialData: SyncStatus(
+        isSyncing: false,
+        pendingCount: 0,
+        syncedCount: 0,
+      ),
+      builder: (context, snapshot) {
+        final status = snapshot.data!;
+
+        // Don't show if nothing to sync and not syncing
+        if (!status.isSyncing &&
+            status.pendingCount == 0 &&
+            status.error == null) {
+          return const SizedBox.shrink();
+        }
+
+        return BounceTap(
+          onTap: status.error != null
+              ? () async {
+                  // Retry sync on error
+                  try {
+                    await syncService.syncAllPending();
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Sync failed: $e')),
+                      );
+                    }
+                  }
+                }
+              : null,
+          child: Container(
+            height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: status.error != null
+                  ? const Color(0xFFF59E0B).withValues(alpha: .18)
+                  : (isDark
+                      ? Colors.white.withValues(alpha: .08)
+                      : Colors.white.withValues(alpha: .90)),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: status.error != null
+                    ? const Color(0xFFF59E0B).withValues(alpha: .35)
+                    : (isDark
+                        ? Colors.white.withValues(alpha: .12)
+                        : Colors.black.withValues(alpha: .06)),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (status.isSyncing)
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        isDark ? Colors.white : const Color(0xFF111827),
+                      ),
+                    ),
+                  )
+                else if (status.error != null)
+                  Icon(
+                    Icons.sync_problem,
+                    size: 16,
+                    color: const Color(0xFFF59E0B),
+                  )
+                else
+                  Icon(
+                    Icons.cloud_upload_outlined,
+                    size: 16,
+                    color: isDark ? Colors.white : const Color(0xFF111827),
+                  ),
+                if (status.pendingCount > 0) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    '${status.pendingCount}',
+                    style: TextStyle(
+                      color: status.error != null
+                          ? const Color(0xFFF59E0B)
+                          : (isDark ? Colors.white : const Color(0xFF111827)),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

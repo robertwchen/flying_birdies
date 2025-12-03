@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../app/theme.dart';
 import '../../widgets/glass_widgets.dart';
-import '../shell/home_shell.dart';
 import '../auth/login_screen.dart'; // add at top
 
 class WelcomeScreen extends StatelessWidget {

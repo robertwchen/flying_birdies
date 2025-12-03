@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../app/theme_controller.dart';
-import '../../services/local_auth.dart';        // 👈 add this
-import '../auth/login_screen.dart';            // 👈 and this
+import '../../services/local_auth.dart';
+import '../../services/database_service.dart';
+import '../auth/login_screen.dart';
 
 enum Handedness { left, right }
 
@@ -29,6 +30,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   late final TextEditingController _nameController;
 
+  // Real training stats
+  int _sessionsAllTime = 0;
+  int _bestStreakDays = 0;
+  int _totalHits = 0;
+  bool _loadingStats = true;
+
   static const _avatarColors = <Color>[
     Color(0xFF6366F1),
     Color(0xFFEC4899),
@@ -42,6 +49,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.initState();
     _nameController = TextEditingController();
     _loadProfile();
+    _loadTrainingStats();
+  }
+
+  Future<void> _loadTrainingStats() async {
+    try {
+      final db = DatabaseService.instance;
+
+      // Get all-time stats
+      final sessionMaps = await db.getSessions(limit: 1000);
+      int totalHits = 0;
+
+      for (final sessionMap in sessionMaps) {
+        final sessionId = sessionMap['id'] as int;
+        final swings = await db.getSwingsForSession(sessionId);
+        totalHits += swings.length;
+      }
+
+      // Get best streak
+      final streak = await db.getCurrentStreak();
+      // For best streak, we'd need to track historical streaks
+      // For now, use current streak as best
+
+      if (mounted) {
+        setState(() {
+          _sessionsAllTime = sessionMaps.length;
+          _bestStreakDays = streak;
+          _totalHits = totalHits;
+          _loadingStats = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load training stats: $e');
+      if (mounted) {
+        setState(() => _loadingStats = false);
+      }
+    }
   }
 
   @override
@@ -60,10 +103,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() {
       _storedName = name;
       _storedEmail = email;
-      _avatarColorIndex =
-          (colorIndex >= 0 && colorIndex < _avatarColors.length)
-              ? colorIndex
-              : 0;
+      _avatarColorIndex = (colorIndex >= 0 && colorIndex < _avatarColors.length)
+          ? colorIndex
+          : 0;
     });
 
     _nameController.text = _displayName;
@@ -145,7 +187,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 16),
-
               TextField(
                 controller: _nameController,
                 textCapitalization: TextCapitalization.words,
@@ -154,7 +195,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-
               Text(
                 'Avatar color',
                 style: theme.textTheme.labelLarge,
@@ -186,7 +226,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   );
                 }),
               ),
-
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
@@ -229,10 +268,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final name = _displayName;
     final email = _displayEmail.isEmpty ? null : _displayEmail;
     final initial = name.isNotEmpty ? name[0].toUpperCase() : 'S';
-
-    const sessionsAllTime = 24;
-    const bestStreakDays = 5;
-    const totalHits = 6800;
 
     return Scaffold(
       appBar: AppBar(
@@ -326,36 +361,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 8),
           Card(
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
-                  Expanded(
-                    child: _SummaryStat(
-                      value: '$sessionsAllTime',
-                      label: 'Sessions',
-                      sub: 'all time',
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              child: _loadingStats
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator(),
+                      ),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: _SummaryStat(
+                            value: '$_sessionsAllTime',
+                            label: 'Sessions',
+                            sub: 'all time',
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _SummaryStat(
+                            value: '$_bestStreakDays',
+                            label: 'Best streak',
+                            sub: 'days',
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _SummaryStat(
+                            value: '$_totalHits',
+                            label: 'Total hits',
+                            sub: 'shots logged',
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: _SummaryStat(
-                      value: '$bestStreakDays',
-                      label: 'Best streak',
-                      sub: 'days',
-                    ),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: _SummaryStat(
-                      value: '$totalHits',
-                      label: 'Total hits',
-                      sub: 'shots logged',
-                    ),
-                  ),
-                ],
-              ),
             ),
           ),
 
@@ -377,8 +418,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     RadioListTile<ThemeMode>(
                       title: const Text('Use system setting'),
-                      subtitle:
-                          const Text('Match your iOS light / dark mode'),
+                      subtitle: const Text('Match your iOS light / dark mode'),
                       value: ThemeMode.system,
                       groupValue: mode,
                       onChanged: (m) {
@@ -538,8 +578,7 @@ class _SummaryStat extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    final valueColor =
-        isDark ? Colors.white : const Color(0xFF111827);
+    final valueColor = isDark ? Colors.white : const Color(0xFF111827);
     final labelColor =
         isDark ? Colors.white.withValues(alpha: .75) : const Color(0xFF4B5563);
     final subColor =

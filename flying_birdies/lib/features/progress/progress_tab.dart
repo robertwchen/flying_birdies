@@ -1,711 +1,358 @@
 import 'package:flutter/material.dart';
-import 'dart:math' as math;
+import 'package:provider/provider.dart';
+import '../../core/interfaces/i_session_service.dart';
+import '../../state/session_state_notifier.dart';
+import '../../models/swing_metrics.dart';
 
-/// Theme-aware progress / calendar tab
+/// Progress tab showing training history and session details
 class ProgressTab extends StatefulWidget {
   const ProgressTab({super.key});
+
   @override
   State<ProgressTab> createState() => _ProgressTabState();
 }
 
 class _ProgressTabState extends State<ProgressTab> {
-  late DateTime _today;
-  late DateTime _month; // first day of shown month
-  int? _selectedDay; // single selected day (1..31)
-
-  final Set<int> _activeDays = {2, 5, 7, 9, 13, 18, 19, 23, 24, 30};
+  List<SessionSummary> _sessions = [];
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _today = DateTime.now();
-    _month = DateTime(_today.year, _today.month);
-    _selectedDay = _today.day;
+    _loadSessions();
+
+    // Listen for session state changes
+    final sessionNotifier = context.read<SessionStateNotifier>();
+    sessionNotifier.addListener(_onSessionsChanged);
   }
 
-  int get _sessions => _activeDays.length;
-  int get _activeDaysCount => _activeDays.length;
-  int get _totalHits => 1260;
-
-  int get _currentStreak {
-    final isThisMonth =
-        _month.year == _today.year && _month.month == _today.month;
-    int streak = 0;
-    int d = isThisMonth ? _today.day : _daysInMonth(_month);
-    while (d >= 1 && _activeDays.contains(d)) {
-      streak++;
-      d--;
-    }
-    return streak;
+  @override
+  void dispose() {
+    final sessionNotifier = context.read<SessionStateNotifier>();
+    sessionNotifier.removeListener(_onSessionsChanged);
+    super.dispose();
   }
 
-  int get _bestStreak {
-    int best = 0, run = 0;
-    for (int d = 1; d <= _daysInMonth(_month); d++) {
-      if (_activeDays.contains(d)) {
-        run++;
-        best = math.max(best, run);
-      } else {
-        run = 0;
-      }
-    }
-    return best;
+  void _onSessionsChanged() {
+    // Reload sessions when notified
+    _loadSessions();
   }
 
-  int get _thisWeekCount {
-    final start = _today.subtract(Duration(days: _today.weekday % 7));
-    final end = start.add(const Duration(days: 6));
-    if (start.month != _month.month || start.year != _month.year) return 0;
-    int c = 0;
-    for (int d = start.day; d <= end.day; d++) {
-      if (_activeDays.contains(d)) c++;
-    }
-    return c;
-  }
+  Future<void> _loadSessions() async {
+    setState(() => _loading = true);
 
-  Map<String, String> _daySummary() {
-    final d = _selectedDay ?? _today.day;
-    final seed = d * 37;
-    final speed = 160 + (seed % 60);
-    final force = 40 + (seed % 70);
-    final accel = 5 + (seed % 50);
-    final power = (force * 0.9 + accel).round();
-    final sweet = 45 + (seed % 55);
-    return {
-      'speed': '$speed km/h',
-      'force': '$force N',
-      'accel': '$accel m/s²',
-      'power': '$power',
-      'sweet': '$sweet%',
-    };
-  }
+    try {
+      final sessionService = context.read<ISessionService>();
+      final sessions = await sessionService.getRecentSessions(limit: 50);
 
-  int _daysInMonth(DateTime m) => DateTime(m.year, m.month + 1, 0).day;
-  int _firstWeekdayOffset(DateTime m) =>
-      DateTime(m.year, m.month, 1).weekday % 7;
-  String _monthName(DateTime d) {
-    const names = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December'
-    ];
-    return names[d.month - 1];
-  }
+      // Update the session state notifier with the latest sessions
+      final sessionNotifier = context.read<SessionStateNotifier>();
+      sessionNotifier.updateRecentSessions(sessions);
 
-  void _prevMonth() => setState(() {
-        _month = DateTime(_month.year, _month.month - 1);
-        _selectedDay = 1;
-      });
-  void _nextMonth() => setState(() {
-        _month = DateTime(_month.year, _month.month + 1);
-        _selectedDay = 1;
-      });
-
-  Future<void> _pickMonthYear() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime(_month.year, _month.month, 15),
-      firstDate: DateTime(_today.year - 5),
-      lastDate: DateTime(_today.year + 5),
-      helpText: 'Pick month & year',
-      initialEntryMode: DatePickerEntryMode.calendarOnly,
-    );
-    if (picked != null) {
       setState(() {
-        _month = DateTime(picked.year, picked.month);
-        _selectedDay = 1;
+        _sessions = sessions;
+        _loading = false;
       });
+    } catch (e) {
+      debugPrint('Failed to load sessions: $e');
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _showSessionDetails(SessionSummary session) async {
+    try {
+      final sessionService = context.read<ISessionService>();
+      final sessionDetail =
+          await sessionService.getSessionDetail(session.sessionId);
+
+      if (!mounted) return;
+
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) => _SessionDetailSheet(
+          session: sessionDetail.summary,
+          swings: sessionDetail.swings,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Failed to load session details: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final titleColor =
-        isDark ? Colors.white : const Color(0xFF111827);
-    final secondary =
-        isDark ? Colors.white.withValues(alpha: .80) : const Color(0xFF4B5563);
+    final titleColor = isDark ? Colors.white : const Color(0xFF111827);
 
-    final day = _selectedDay;
-    final summary = _daySummary();
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
-      children: [
-        Center(
-          child: Text(
-            'Progress & Records',
-            style: TextStyle(
-              color: titleColor,
-              fontWeight: FontWeight.w800,
-              fontSize: 26,
+    return RefreshIndicator(
+      onRefresh: _loadSessions,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+        children: [
+          Center(
+            child: Text(
+              'Training History',
+              style: TextStyle(
+                color: titleColor,
+                fontWeight: FontWeight.w800,
+                fontSize: 26,
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 12),
+          const SizedBox(height: 20),
+          if (_loading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(40),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (_sessions.isEmpty)
+            _EmptyState()
+          else
+            ..._sessions.map((session) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _SessionCard(
+                    session: session,
+                    onTap: () => _showSessionDetails(session),
+                  ),
+                )),
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
+  }
+}
 
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _RoundIcon(onTap: _prevMonth),
-            const SizedBox(width: 10),
-            InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: _pickMonthYear,
-              child: _MonthChip(text: '${_monthName(_month)} ${_month.year}'),
-            ),
-            const SizedBox(width: 10),
-            _RoundIcon(onTap: _nextMonth),
+/// Session card widget
+class _SessionCard extends StatelessWidget {
+  const _SessionCard({
+    required this.session,
+    required this.onTap,
+  });
+
+  final SessionSummary session;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? Colors.white.withValues(alpha: .04) : Colors.white;
+    final border =
+        isDark ? Colors.white.withValues(alpha: .10) : const Color(0x14000000);
+    final titleColor = isDark ? Colors.white : const Color(0xFF111827);
+    final subtitleColor =
+        isDark ? Colors.white.withValues(alpha: .75) : const Color(0xFF6B7280);
+
+    final dateStr = _formatDate(session.startTime);
+    final timeStr = _formatTime(session.startTime);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: border),
+          boxShadow: [
+            if (!isDark)
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .04),
+                blurRadius: 14,
+                offset: const Offset(0, 10),
+              ),
           ],
         ),
-
-        const SizedBox(height: 18),
-        Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: _MiniStatV(
-                icon: Icons.timer_outlined,
-                title: 'Sessions',
-                value: '$_sessions',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _MiniStatV(
-                icon: Icons.local_fire_department_outlined,
-                title: 'Active days',
-                value: '$_activeDaysCount',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _MiniStatV(
-                icon: Icons.sports_tennis,
-                title: 'Total hits',
-                value: '$_totalHits',
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 18),
-        _GlassCard(
-          child: Column(
-            children: [
-              const SizedBox(height: 6),
-              const _WeekHeader(),
-              const SizedBox(height: 10),
-              _MonthGridSingleSelect(
-                month: _month,
-                today: _today,
-                selectedDay: _selectedDay,
-                activeDays: _activeDays,
-                onSelect: (d) => setState(() => _selectedDay = d),
-              ),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  day == null
-                      ? 'No day selected'
-                      : 'Selected: ${_monthName(_month)} $day, ${_month.year}',
+            Row(
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF7C3AED).withValues(alpha: .18),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: const Color(0xFF7C3AED).withValues(alpha: .35)),
+                  ),
+                  child: Text(
+                    dateStr,
+                    style: const TextStyle(
+                      color: Color(0xFF7C3AED),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  timeStr,
                   style: TextStyle(
-                    color: secondary,
+                    color: subtitleColor,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 18),
-        _GlassCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+                const Spacer(),
+                Icon(
+                  Icons.chevron_right,
+                  color: subtitleColor,
+                  size: 20,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (session.strokeFocus != null) ...[
               Text(
-                'Day Summary',
+                session.strokeFocus!,
                 style: TextStyle(
                   color: titleColor,
                   fontWeight: FontWeight.w800,
                   fontSize: 16,
                 ),
               ),
-              const SizedBox(height: 12),
-              _DayRow(
-                label: 'Swing Speed',
-                value: summary['speed']!,
-                icon: Icons.flash_on_rounded,
-              ),
-              const SizedBox(height: 10),
-              _DayRow(
-                label: 'Impact Force',
-                value: summary['force']!,
-                icon: Icons.adjust_rounded,
-              ),
-              const SizedBox(height: 10),
-              _DayRow(
-                label: 'Acceleration',
-                value: summary['accel']!,
-                icon: Icons.trending_up_rounded,
-              ),
-              const SizedBox(height: 12),
-              _Meter(label: 'Power Index', percent: _clampPct(int.parse(summary['power']!) / 120.0)),
-              const SizedBox(height: 10),
-              _Meter(
-                label: 'Sweet-Spot %',
-                percent: _clampPct(
-                  int.parse(summary['sweet']!.replaceAll('%', '')) / 100.0,
-                ),
-              ),
+              const SizedBox(height: 8),
             ],
-          ),
+            Row(
+              children: [
+                _MetricChip(
+                  icon: Icons.sports_tennis,
+                  label: '${session.swingCount} swings',
+                ),
+                const SizedBox(width: 8),
+                _MetricChip(
+                  icon: Icons.timer_outlined,
+                  label: '${session.durationMinutes} min',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _MiniMetric(
+                    label: 'Avg Speed',
+                    value: session.avgSpeed.toStringAsFixed(0),
+                    unit: 'km/h',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _MiniMetric(
+                    label: 'Avg Force',
+                    value: session.avgForce.toStringAsFixed(0),
+                    unit: 'N',
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
-
-        const SizedBox(height: 18),
-        _StatCard(
-          title: 'Current Streak',
-          value: '$_currentStreak',
-          suffix: 'days',
-          icon: Icons.local_fire_department_rounded,
-          accent: const Color(0xFFF59E0B),
-          caption:
-              _currentStreak > 0 ? 'Keep it going!' : 'Start today to begin a streak',
-        ),
-        const SizedBox(height: 12),
-        _StatCard(
-          title: 'Best Streak',
-          value: '$_bestStreak',
-          suffix: 'days',
-          icon: Icons.emoji_events_rounded,
-          accent: const Color(0xFFFB7185),
-          caption: 'Personal record',
-        ),
-        const SizedBox(height: 12),
-        _StatCard(
-          title: 'This Week',
-          value: '$_thisWeekCount',
-          suffix: ' / 7 days',
-          icon: Icons.event_rounded,
-          accent: const Color(0xFF60A5FA),
-          caption: '$_sessions sessions',
-        ),
-
-        const SizedBox(height: 80),
-      ],
+      ),
     );
+  }
+
+  String _formatDate(DateTime dt) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final sessionDate = DateTime(dt.year, dt.month, dt.day);
+
+    if (sessionDate == today) return 'Today';
+    if (sessionDate == yesterday) return 'Yesterday';
+
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
+  }
+
+  String _formatTime(DateTime dt) {
+    final hour = dt.hour;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+    return '$displayHour:$minute $period';
   }
 }
 
-/* ─────────── helpers & widgets ─────────── */
+/// Metric chip widget
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({
+    required this.icon,
+    required this.label,
+  });
 
-double _clampPct(double x) => x.clamp(0.0, 1.0);
-
-class _MonthChip extends StatelessWidget {
-  const _MonthChip({required this.text});
-  final String text;
+  final IconData icon;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark
-        ? Colors.white.withValues(alpha: .08)
-        : const Color(0xFFF3F4FF);
-    final border = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0xFFE5E7EB);
+    final bg =
+        isDark ? Colors.white.withValues(alpha: .06) : const Color(0xFFF3F4FF);
     final textColor =
-        isDark ? Colors.white : const Color(0xFF111827);
+        isDark ? Colors.white.withValues(alpha: .85) : const Color(0xFF4B5563);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.calendar_today_rounded,
-            size: 14,
-            color: isDark ? Colors.white70 : const Color(0xFF6B7280),
-          ),
-          const SizedBox(width: 8),
+          Icon(icon, size: 14, color: textColor),
+          const SizedBox(width: 6),
           Text(
-            text,
-            style: TextStyle(
-              color: textColor,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MiniStatV extends StatelessWidget {
-  const _MiniStatV(
-      {required this.icon, required this.title, required this.value});
-  final IconData icon;
-  final String title;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg =
-        isDark ? Colors.white.withValues(alpha: .05) : Colors.white;
-    final border = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0x14000000);
-    final iconBg =
-        isDark ? Colors.white.withValues(alpha: .10) : const Color(0xFFF3F4FF);
-    final iconColor =
-        isDark ? Colors.white70 : const Color(0xFF4B5563);
-    final titleColor =
-        isDark ? Colors.white70 : const Color(0xFF6B7280);
-    final valueColor =
-        isDark ? Colors.white : const Color(0xFF111827);
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: bg,
-        border: Border.all(color: border),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .04),
-              blurRadius: 14,
-              offset: const Offset(0, 10),
-            ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: iconBg,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: iconColor, size: 18),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: titleColor,
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor,
-              fontWeight: FontWeight.w800,
-              fontSize: 22,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RoundIcon extends StatelessWidget {
-  const _RoundIcon({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg =
-        isDark ? Colors.white.withValues(alpha: .08) : Colors.white;
-    final border = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0xFFE5E7EB);
-    final iconColor =
-        isDark ? Colors.white70 : const Color(0xFF4B5563);
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: onTap,
-      child: Container(
-        width: 38,
-        height: 38,
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: border),
-        ),
-        child: Icon(
-          Icons.chevron_left,
-          color: iconColor,
-          size: 20,
-        ),
-      ),
-    );
-  }
-}
-
-class _GlassCard extends StatelessWidget {
-  const _GlassCard({required this.child});
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg =
-        isDark ? Colors.white.withValues(alpha: .04) : Colors.white;
-    final border = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0x14000000);
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: bg,
-        border: Border.all(color: border),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .04),
-              blurRadius: 16,
-              offset: const Offset(0, 10),
-            ),
-        ],
-      ),
-      child: child,
-    );
-  }
-}
-
-class _WeekHeader extends StatelessWidget {
-  const _WeekHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final color =
-        isDark ? Colors.white.withValues(alpha: .75) : const Color(0xFF6B7280);
-    const days = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: days
-          .map(
-            (d) => Expanded(
-              child: Center(
-                child: Text(
-                  d,
-                  style: TextStyle(
-                    color: color,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          )
-          .toList(),
-    );
-  }
-}
-
-class _MonthGridSingleSelect extends StatelessWidget {
-  const _MonthGridSingleSelect({
-    required this.month,
-    required this.today,
-    required this.selectedDay,
-    required this.activeDays,
-    required this.onSelect,
-  });
-
-  final DateTime month;
-  final DateTime today;
-  final int? selectedDay;
-  final Set<int> activeDays;
-  final void Function(int day) onSelect;
-
-  int _daysInMonth(DateTime m) => DateTime(m.year, m.month + 1, 0).day;
-  int _firstWeekdayOffset(DateTime m) =>
-      DateTime(m.year, m.month, 1).weekday % 7;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final days = _daysInMonth(month);
-    final startOffset = _firstWeekdayOffset(month);
-    final cells = startOffset + days;
-    final rows = (cells / 7).ceil();
-    final isThisMonth =
-        month.year == today.year && month.month == today.month;
-
-    final activeBg = isDark
-        ? const Color(0xFF7C3AED).withValues(alpha: .18)
-        : const Color(0xFFE0E7FF);
-    final selectedGradient = const LinearGradient(
-      colors: [Color(0xFF8B5CF6), Color(0xFF6366F1)],
-    );
-
-    return Column(
-      children: List.generate(rows, (r) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: List.generate(7, (c) {
-              final i = r * 7 + c;
-              final dayNum = i - startOffset + 1;
-              final inMonth = dayNum >= 1 && dayNum <= days;
-              final isSelected = inMonth && (selectedDay == dayNum);
-              final isActive = inMonth && activeDays.contains(dayNum);
-              final isToday =
-                  inMonth && isThisMonth && (dayNum == today.day);
-
-              return Expanded(
-                child: AspectRatio(
-                  aspectRatio: 1.2,
-                  child: Center(
-                    child: inMonth
-                        ? InkWell(
-                            borderRadius: BorderRadius.circular(12),
-                            onTap: () => onSelect(dayNum),
-                            child: Container(
-                              width: 36,
-                              height: 36,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                gradient: isSelected ? selectedGradient : null,
-                                color: isSelected
-                                    ? null
-                                    : (isActive ? activeBg : Colors.transparent),
-                                border: Border.all(
-                                  color: isSelected
-                                      ? Colors.white.withValues(alpha: .40)
-                                      : isToday
-                                          ? Colors.white.withValues(alpha: .35)
-                                          : Colors.white.withValues(alpha: .10),
-                                ),
-                                boxShadow: isSelected
-                                    ? [
-                                        BoxShadow(
-                                          color: const Color(0xFF7C3AED)
-                                              .withValues(alpha: .35),
-                                          blurRadius: 10,
-                                        )
-                                      ]
-                                    : null,
-                              ),
-                              child: Center(
-                                child: Text(
-                                  '$dayNum',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: isSelected
-                                        ? FontWeight.w800
-                                        : (isActive
-                                            ? FontWeight.w700
-                                            : FontWeight.w600),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                ),
-              );
-            }),
-          ),
-        );
-      }),
-    );
-  }
-}
-
-class _DayRow extends StatelessWidget {
-  const _DayRow(
-      {required this.label, required this.value, required this.icon});
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final labelColor =
-        isDark ? Colors.white70 : const Color(0xFF4B5563);
-    final valueColor =
-        isDark ? Colors.white : const Color(0xFF111827);
-    final iconBg =
-        isDark ? Colors.white.withValues(alpha: .10) : const Color(0xFFE5E7EB);
-    final iconColor =
-        isDark ? Colors.white70 : const Color(0xFF4B5563);
-
-    return Row(
-      children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: iconBg,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: iconColor, size: 18),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
             label,
             style: TextStyle(
-              color: labelColor,
-              fontWeight: FontWeight.w700,
+              color: textColor,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
             ),
           ),
-        ),
-        Text(
-          value,
-          style: TextStyle(
-            color: valueColor,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
 
-class _Meter extends StatelessWidget {
-  const _Meter({required this.label, required this.percent});
+/// Mini metric widget
+class _MiniMetric extends StatelessWidget {
+  const _MiniMetric({
+    required this.label,
+    required this.value,
+    required this.unit,
+  });
+
   final String label;
-  final double percent;
+  final String value;
+  final String unit;
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final labelColor =
-        isDark ? Colors.white70 : const Color(0xFF4B5563);
-    final trackColor =
-        isDark ? Colors.white.withValues(alpha: .08) : const Color(0xFFE5E7EB);
+        isDark ? Colors.white.withValues(alpha: .70) : const Color(0xFF6B7280);
+    final valueColor = isDark ? Colors.white : const Color(0xFF111827);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -714,130 +361,354 @@ class _Meter extends StatelessWidget {
           label,
           style: TextStyle(
             color: labelColor,
-            fontWeight: FontWeight.w700,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: SizedBox(
-            height: 8,
-            child: Stack(
-              children: [
-                Container(color: trackColor),
-                FractionallySizedBox(
-                  widthFactor: percent,
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFFFF6FD8), Color(0xFF7E4AED)],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+        const SizedBox(height: 4),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                color: valueColor,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
+            const SizedBox(width: 4),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                unit,
+                style: TextStyle(
+                  color: labelColor,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
 }
 
-class _StatCard extends StatelessWidget {
-  const _StatCard({
-    required this.title,
-    required this.value,
-    required this.suffix,
-    required this.icon,
-    required this.accent,
-    this.caption,
+/// Empty state widget
+class _EmptyState extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? Colors.white.withValues(alpha: .04) : Colors.white;
+    final border =
+        isDark ? Colors.white.withValues(alpha: .10) : const Color(0x14000000);
+    final textColor =
+        isDark ? Colors.white.withValues(alpha: .85) : const Color(0xFF4B5563);
+
+    return Container(
+      padding: const EdgeInsets.all(40),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.history_rounded,
+            size: 64,
+            color: textColor.withValues(alpha: .5),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'No Training History',
+            style: TextStyle(
+              color: textColor,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Start a training session to see your progress here',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: textColor.withValues(alpha: .75),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Session detail sheet
+class _SessionDetailSheet extends StatelessWidget {
+  const _SessionDetailSheet({
+    required this.session,
+    required this.swings,
   });
 
-  final String title, value, suffix;
-  final IconData icon;
-  final Color accent;
-  final String? caption;
+  final SessionSummary session;
+  final List<SwingMetrics> swings;
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final titleColor =
-        isDark ? Colors.white : const Color(0xFF111827);
-    final captionColor =
-        isDark ? Colors.white.withValues(alpha: .75) : const Color(0xFF4B5563);
-    final bg =
-        isDark ? Colors.white.withValues(alpha: .04) : Colors.white;
-    final border = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0x14000000);
+    final bg = isDark ? const Color(0xFF0E1220) : Colors.white;
+    final titleColor = isDark ? Colors.white : const Color(0xFF111827);
+    final subtitleColor =
+        isDark ? Colors.white.withValues(alpha: .75) : const Color(0xFF6B7280);
 
-    return _GlassCard(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.8,
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
         children: [
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(
-                title,
-                style: TextStyle(
-                  color: titleColor,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    value,
-                    style: TextStyle(
-                      color: titleColor,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 28,
-                    ),
+          // Handle
+          Container(
+            width: 48,
+            height: 6,
+            margin: const EdgeInsets.only(top: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .14),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+
+          // Header
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Session Details',
+                  style: TextStyle(
+                    color: titleColor,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
                   ),
-                  const SizedBox(width: 6),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      suffix,
-                      style: TextStyle(
-                        color: captionColor,
-                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${_formatDate(session.startTime)} at ${_formatTime(session.startTime)}',
+                  style: TextStyle(
+                    color: subtitleColor,
+                    fontSize: 14,
+                  ),
+                ),
+                if (session.strokeFocus != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Focus: ${session.strokeFocus}',
+                    style: TextStyle(
+                      color: subtitleColor,
+                      fontSize: 14,
                     ),
                   ),
                 ],
-              ),
-              if (caption != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  caption!,
-                  style: TextStyle(color: captionColor),
-                ),
               ],
-            ]),
-          ),
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: .20),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: accent.withValues(alpha: .45)),
             ),
-            child: Icon(icon, color: Colors.white, size: 18),
+          ),
+
+          // Swings list
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              itemCount: swings.length,
+              itemBuilder: (context, index) {
+                final swing = swings[index];
+                return _SwingRow(swing: swing, index: index + 1);
+              },
+            ),
+          ),
+
+          // Close button
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ),
           ),
         ],
       ),
-    ).copyWithDecoration(bg, border);
+    );
+  }
+
+  String _formatDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+  }
+
+  String _formatTime(DateTime dt) {
+    final hour = dt.hour;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+    return '$displayHour:$minute $period';
   }
 }
 
-extension on _GlassCard {
-  _GlassCard copyWithDecoration(Color bg, Color border) {
-    return _GlassCard(child: child);
+/// Swing row widget
+class _SwingRow extends StatelessWidget {
+  const _SwingRow({
+    required this.swing,
+    required this.index,
+  });
+
+  final SwingMetrics swing;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? Colors.white.withValues(alpha: .04) : Colors.white;
+    final border =
+        isDark ? Colors.white.withValues(alpha: .10) : const Color(0x14000000);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF7C3AED).withValues(alpha: .18),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'Swing #$index',
+                  style: const TextStyle(
+                    color: Color(0xFF7C3AED),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Icon(
+                swing.qualityPassed
+                    ? Icons.check_circle
+                    : Icons.warning_rounded,
+                size: 16,
+                color: swing.qualityPassed
+                    ? const Color(0xFF22C55E)
+                    : const Color(0xFFF59E0B),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _SwingMetric(
+                  label: 'Speed',
+                  value: swing.maxVtipKmh.toStringAsFixed(0),
+                  unit: 'km/h',
+                ),
+              ),
+              Expanded(
+                child: _SwingMetric(
+                  label: 'Force',
+                  value: swing.estForceN.toStringAsFixed(0),
+                  unit: 'N',
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Swing metric widget
+class _SwingMetric extends StatelessWidget {
+  const _SwingMetric({
+    required this.label,
+    required this.value,
+    required this.unit,
+  });
+
+  final String label;
+  final String value;
+  final String unit;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final labelColor =
+        isDark ? Colors.white.withValues(alpha: .70) : const Color(0xFF6B7280);
+    final valueColor = isDark ? Colors.white : const Color(0xFF111827);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: labelColor,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                color: valueColor,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(width: 3),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 1),
+              child: Text(
+                unit,
+                style: TextStyle(
+                  color: labelColor,
+                  fontSize: 10,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 }

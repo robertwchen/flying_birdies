@@ -1,7 +1,14 @@
 // lib/features/Train/train_tab.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../../app/theme.dart'; // for gradient colors etc.
+import '../../app/theme.dart';
+import '../../services/ble_service.dart';
+import '../../services/analytics_service.dart';
+import '../../services/session_service.dart';
+import '../../state/connection_state_notifier.dart';
+import '../../state/session_state_notifier.dart';
 
 class TrainTab extends StatefulWidget {
   const TrainTab({super.key, this.deviceName});
@@ -48,13 +55,77 @@ class _TrainTabState extends State<TrainTab> {
   double acceleration = 0; // m/s^2
   double swingForce = 0; // arbitrary unit
 
-  bool get _isConnected => widget.deviceName != null;
+  // Stream subscriptions
+  StreamSubscription? _imuSubscription;
+  StreamSubscription? _swingSubscription;
+  StreamSubscription? _connectionSubscription;
+
+  int? _currentSessionId;
 
   @override
   void initState() {
     super.initState();
     // Default to first stroke so dropdown has a value.
     _selectedKey = _strokes.first.key;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Get services from Provider
+    final bleService = Provider.of<BleService>(context, listen: false);
+    final analyticsService =
+        Provider.of<AnalyticsService>(context, listen: false);
+    final sessionService = Provider.of<SessionService>(context, listen: false);
+
+    // Cancel existing subscriptions
+    _imuSubscription?.cancel();
+    _swingSubscription?.cancel();
+    _connectionSubscription?.cancel();
+
+    // Subscribe to IMU data stream and process through analytics
+    _imuSubscription = bleService.imuDataStream.listen((reading) {
+      if (_sessionActive) {
+        analyticsService.processReading(reading);
+      }
+    });
+
+    // Subscribe to swing detection stream
+    _swingSubscription = analyticsService.swingStream.listen((swing) {
+      if (_sessionActive && mounted) {
+        setState(() {
+          // Update all 4 metrics from detected swing
+          swingSpeed = swing.maxVtip * 3.6; // m/s to km/h
+          impactForce = swing.estForceN;
+          acceleration = swing.impactAmax;
+          swingForce = swing.impactSeverity;
+          _shotCount += 1;
+        });
+
+        // Save to database via SessionService
+        if (_currentSessionId != null) {
+          sessionService.recordSwing(_currentSessionId!, swing);
+        }
+      }
+    });
+
+    // Subscribe to connection state changes
+    _connectionSubscription = bleService.connectionStateStream.listen((state) {
+      if (mounted) {
+        setState(() {
+          // Trigger rebuild when connection state changes
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _imuSubscription?.cancel();
+    _swingSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    super.dispose();
   }
 
   _StrokeMeta get _currentStroke {
@@ -65,35 +136,23 @@ class _TrainTabState extends State<TrainTab> {
     return sel;
   }
 
-  /// Call this from your BLE layer whenever a shot is detected.
-  /// If session is not active or no stroke is selected, we ignore it.
-  void registerShot({
-    required double speedKmh,
-    required double impactN,
-    required double accel,
-    required double swingForceValue,
-  }) {
-    if (!_sessionActive || _selectedKey == null) return;
-
-    setState(() {
-      swingSpeed = speedKmh;
-      impactForce = impactN;
-      acceleration = accel;
-      swingForce = swingForceValue;
-      _shotCount += 1;
-    });
-  }
-
   void _onSelectStroke(String key) {
     setState(() {
       _selectedKey = key;
     });
   }
 
-  void _onToggleSession() {
+  Future<void> _onToggleSession() async {
+    final bleService = Provider.of<BleService>(context, listen: false);
+    final analyticsService =
+        Provider.of<AnalyticsService>(context, listen: false);
+    final sessionService = Provider.of<SessionService>(context, listen: false);
+    final sessionStateNotifier =
+        Provider.of<SessionStateNotifier>(context, listen: false);
+
     // You must be connected before starting.
     if (!_sessionActive) {
-      if (!_isConnected) {
+      if (!bleService.isConnected) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Connect your sensor before starting a session.'),
@@ -101,27 +160,65 @@ class _TrainTabState extends State<TrainTab> {
         );
         return;
       }
-    }
 
-    setState(() {
-      // If we’re starting a new session, reset counters.
-      if (!_sessionActive) {
-        _shotCount = 0;
-        swingSpeed = 0;
-        impactForce = 0;
-        acceleration = 0;
-        swingForce = 0;
+      // Start new session
+      try {
+        final sessionId = await sessionService.startSession(
+          userId: null, // TODO: Get from auth service
+          deviceId: bleService.connectedDeviceId,
+          strokeFocus: _currentStroke.title,
+        );
+
+        setState(() {
+          _currentSessionId = sessionId;
+          _shotCount = 0;
+          swingSpeed = 0;
+          impactForce = 0;
+          acceleration = 0;
+          swingForce = 0;
+          _sessionActive = true;
+        });
+
+        // Clear analyzer state
+        analyticsService.reset();
+
+        // Update session state notifier
+        sessionStateNotifier.startSession(sessionId);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to start session: $e')),
+          );
+        }
       }
-      _sessionActive = !_sessionActive;
-    });
+    } else {
+      // End session
+      if (_currentSessionId != null) {
+        try {
+          await sessionService.endSession(_currentSessionId!);
+
+          // Update session state notifier
+          sessionStateNotifier.endSession();
+        } catch (e) {
+          debugPrint('Failed to end session: $e');
+        }
+      }
+
+      setState(() {
+        _sessionActive = false;
+        _currentSessionId = null;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryText = isDark ? Colors.white : const Color(0xFF111827);
-    final secondaryText =
-        isDark ? Colors.white.withOpacity(.80) : const Color(0xFF6B7280);
+
+    // Get connection state from Provider
+    final connectionState = context.watch<ConnectionStateNotifier>();
+    final isConnected = connectionState.isConnected;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -145,8 +242,10 @@ class _TrainTabState extends State<TrainTab> {
             ),
             const Spacer(),
             _ConnectionPill(
-              isConnected: _isConnected,
-              deviceName: widget.deviceName ?? 'No sensor',
+              isConnected: isConnected,
+              deviceName: connectionState.deviceName ??
+                  widget.deviceName ??
+                  'No sensor',
             ),
           ],
         ),
@@ -190,6 +289,14 @@ class _TrainTabState extends State<TrainTab> {
         ),
         const SizedBox(height: 10),
 
+        // Start / End button moved up, directly under the heading.
+        _PrimaryButton(
+          label: _sessionActive ? 'End session' : 'Start session',
+          onTap: _onToggleSession,
+        ),
+
+        const SizedBox(height: 12),
+
         _LiveSensorHeroCard(
           isActive: _sessionActive,
           selectedStroke: _selectedKey != null ? _currentStroke.title : null,
@@ -225,14 +332,6 @@ class _TrainTabState extends State<TrainTab> {
           ],
         ),
 
-        const SizedBox(height: 24),
-
-        // Start / End session button
-        _PrimaryButton(
-          label: _sessionActive ? 'End session' : 'Start session',
-          onTap: _onToggleSession,
-        ),
-
         const SizedBox(height: 40),
       ],
     );
@@ -254,14 +353,17 @@ class _ConnectionPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final color =
         isConnected ? const Color(0xFF22C55E) : const Color(0xFFF97316);
-    final bg = color.withOpacity(.16);
+    final bg = color.withValues(alpha: .16);
+
+    // Display actual device name when connected, or "Not connected" when disconnected
+    final displayText = isConnected ? deviceName : 'Not connected';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withOpacity(.6)),
+        border: Border.all(color: color.withValues(alpha: .6)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -273,7 +375,7 @@ class _ConnectionPill extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Text(
-            isConnected ? 'StrikePro Sensor' : 'Not connected',
+            displayText,
             style: TextStyle(
               color: color,
               fontWeight: FontWeight.w700,
@@ -300,12 +402,12 @@ class _StrokeSelectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? Colors.white.withOpacity(0.04) : Colors.white;
+    final bg = isDark ? Colors.white.withValues(alpha: 0.04) : Colors.white;
     final border =
-        isDark ? Colors.white.withOpacity(0.12) : const Color(0x14000000);
+        isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0x14000000);
     final titleColor = isDark ? Colors.white : const Color(0xFF111827);
     final subColor =
-        isDark ? Colors.white.withOpacity(.80) : const Color(0xFF4B5563);
+        isDark ? Colors.white.withValues(alpha: .80) : const Color(0xFF4B5563);
 
     final selectedValue = selectedKey ?? strokes.first.key;
     final current = strokes.firstWhere(
@@ -347,12 +449,12 @@ class _StrokeSelectionCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
               color: isDark
-                  ? Colors.white.withOpacity(.06)
+                  ? Colors.white.withValues(alpha: .06)
                   : const Color(0xFFF3F4FF),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: isDark
-                    ? Colors.white.withOpacity(.18)
+                    ? Colors.white.withValues(alpha: .18)
                     : const Color(0xFFE5E7EB),
               ),
             ),
@@ -360,12 +462,11 @@ class _StrokeSelectionCard extends StatelessWidget {
               child: DropdownButton<String>(
                 value: selectedValue,
                 isExpanded: true,
-                dropdownColor:
-                    isDark ? const Color(0xFF151A29) : Colors.white,
+                dropdownColor: isDark ? const Color(0xFF151A29) : Colors.white,
                 icon: Icon(
                   Icons.keyboard_arrow_down_rounded,
                   color: isDark
-                      ? Colors.white.withOpacity(.85)
+                      ? Colors.white.withValues(alpha: .85)
                       : const Color(0xFF4B5563),
                 ),
                 style: TextStyle(
@@ -412,7 +513,7 @@ class _LiveSensorHeroCard extends StatelessWidget {
         : 'Recording hits for ${selectedStroke ?? 'your stroke'}.\nMetrics update on each registered shot.';
 
     return Container(
-      height: 150,
+      height: 140, // bumped up so text doesn't overflow
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         gradient: const LinearGradient(
@@ -422,7 +523,7 @@ class _LiveSensorHeroCard extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(.28),
+            color: Colors.black.withValues(alpha: .28),
             blurRadius: 20,
             offset: const Offset(0, 12),
           ),
@@ -441,7 +542,7 @@ class _LiveSensorHeroCard extends StatelessWidget {
               ),
               child: Icon(
                 Icons.sports_tennis_rounded,
-                color: Colors.white.withOpacity(.90),
+                color: Colors.white.withValues(alpha: .90),
                 size: 40,
               ),
             ),
@@ -453,7 +554,7 @@ class _LiveSensorHeroCard extends StatelessWidget {
                   Text(
                     statusTitle,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(.98),
+                      color: Colors.white.withValues(alpha: .98),
                       fontWeight: FontWeight.w800,
                       fontSize: 20,
                     ),
@@ -461,8 +562,10 @@ class _LiveSensorHeroCard extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     statusSubtitle,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(.88),
+                      color: Colors.white.withValues(alpha: .88),
                       height: 1.35,
                     ),
                   ),
@@ -489,9 +592,9 @@ class _ShotCountPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg =
-        isDark ? Colors.white.withOpacity(.06) : const Color(0xFFE5E7EB);
+        isDark ? Colors.white.withValues(alpha: .06) : const Color(0xFFE5E7EB);
     final textColor =
-        isDark ? Colors.white.withOpacity(.9) : const Color(0xFF111827);
+        isDark ? Colors.white.withValues(alpha: .9) : const Color(0xFF111827);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -499,7 +602,7 @@ class _ShotCountPill extends StatelessWidget {
         color: bg,
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: Colors.white.withOpacity(isDark ? .18 : .10),
+          color: Colors.white.withValues(alpha: isDark ? .18 : .10),
         ),
       ),
       child: Row(
@@ -512,14 +615,14 @@ class _ShotCountPill extends StatelessWidget {
             style: TextStyle(
               color: textColor,
               fontWeight: FontWeight.w800,
-              fontSize: 16, // bigger number
+              fontSize: 16,
             ),
           ),
           const SizedBox(width: 4),
           Text(
             'shots',
             style: TextStyle(
-              color: textColor.withOpacity(.85),
+              color: textColor.withValues(alpha: .85),
               fontWeight: FontWeight.w600,
               fontSize: 13,
             ),
@@ -555,12 +658,12 @@ class _MetricSmallCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? Colors.white.withOpacity(.04) : Colors.white;
+    final bg = isDark ? Colors.white.withValues(alpha: .04) : Colors.white;
     final border =
-        isDark ? Colors.white.withOpacity(.10) : const Color(0x14000000);
+        isDark ? Colors.white.withValues(alpha: .10) : const Color(0x14000000);
     final titleColor = isDark ? Colors.white : const Color(0xFF111827);
     final unitColor =
-        isDark ? Colors.white.withOpacity(.80) : const Color(0xFF6B7280);
+        isDark ? Colors.white.withValues(alpha: .80) : const Color(0xFF6B7280);
 
     final displayValue =
         value <= 0 ? '--' : value.toStringAsFixed(value < 10 ? 1 : 0);

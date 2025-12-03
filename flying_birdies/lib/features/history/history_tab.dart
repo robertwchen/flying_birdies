@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../feedback/feedback_tab.dart';
+import '../../services/database_service.dart';
+import '../../state/session_state_notifier.dart';
 
 class HistoryTab extends StatefulWidget {
   const HistoryTab({super.key});
@@ -8,9 +11,108 @@ class HistoryTab extends StatefulWidget {
 }
 
 class _HistoryTabState extends State<HistoryTab> {
+  final DatabaseService _db = DatabaseService.instance;
   DateTime _focusedMonth =
       DateTime(DateTime.now().year, DateTime.now().month, 1);
   DateTime _selectedDay = DateTime.now();
+
+  List<SessionSummary> _allSessions = [];
+  bool _loading = true;
+  int _totalSessions = 0;
+  int _activeDays = 0;
+  int _totalHits = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAllSessions();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Listen for session changes from Provider
+    final sessionNotifier = context.read<SessionStateNotifier>();
+    sessionNotifier
+        .removeListener(_onSessionsChanged); // Remove if already added
+    sessionNotifier.addListener(_onSessionsChanged);
+  }
+
+  @override
+  void dispose() {
+    final sessionNotifier = context.read<SessionStateNotifier>();
+    sessionNotifier.removeListener(_onSessionsChanged);
+    super.dispose();
+  }
+
+  void _onSessionsChanged() {
+    // Reload sessions when notified
+    _loadAllSessions();
+  }
+
+  Future<void> _loadAllSessions() async {
+    setState(() => _loading = true);
+
+    try {
+      final sessionMaps = await _db.getSessions(limit: 100);
+      final sessions = <SessionSummary>[];
+      final uniqueDays = <String>{};
+      int totalHits = 0;
+
+      for (final sessionMap in sessionMaps) {
+        final sessionId = sessionMap['id'] as int;
+        final swings = await _db.getSwingsForSession(sessionId);
+
+        if (swings.isNotEmpty) {
+          final avgSpeed =
+              swings.map((s) => s.maxVtipKmh).reduce((a, b) => a + b) /
+                  swings.length;
+          final maxSpeed =
+              swings.map((s) => s.maxVtipKmh).reduce((a, b) => a > b ? a : b);
+
+          final startTime = DateTime.fromMillisecondsSinceEpoch(
+              sessionMap['start_time'] as int);
+
+          // Track unique days
+          final dayKey =
+              '${startTime.year}-${startTime.month}-${startTime.day}';
+          uniqueDays.add(dayKey);
+          totalHits += swings.length;
+
+          sessions.add(SessionSummary(
+            id: sessionId.toString(),
+            date: startTime,
+            title: sessionMap['stroke_focus'] as String? ?? 'Training',
+            avgSpeedKmh: avgSpeed,
+            maxSpeedKmh: maxSpeed,
+            sweetSpotPct: 0.6, // placeholder
+            consistencyPct: 0.7, // placeholder
+            hits: swings.length,
+          ));
+        }
+      }
+
+      setState(() {
+        _allSessions = sessions;
+        _totalSessions = sessions.length;
+        _activeDays = uniqueDays.length;
+        _totalHits = totalHits;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Failed to load sessions: $e');
+      setState(() => _loading = false);
+    }
+  }
+
+  List<SessionSummary> _getSessionsForDay(DateTime day) {
+    return _allSessions.where((s) {
+      return s.date.year == day.year &&
+          s.date.month == day.month &&
+          s.date.day == day.day;
+    }).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -21,8 +123,7 @@ class _HistoryTabState extends State<HistoryTab> {
     final subtitleColor =
         isDark ? Colors.white.withValues(alpha: .85) : const Color(0xFF4B5563);
 
-    // For now, use mock sessions; later, pull from real storage by _selectedDay
-    final sessions = _mockSessionsForDay(_selectedDay);
+    final sessions = _getSessionsForDay(_selectedDay);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -37,14 +138,20 @@ class _HistoryTabState extends State<HistoryTab> {
           ),
         ),
         const SizedBox(height: 16),
-
-        _StatRow(items: const [
-          _TopStat(label: 'Sessions', value: '16'),
-          _TopStat(label: 'Active days', value: '16'),
-          _TopStat(label: 'Total hits', value: '6800'),
-        ]),
+        if (_loading)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: CircularProgressIndicator(),
+            ),
+          )
+        else
+          _StatRow(items: [
+            _TopStat(label: 'Sessions', value: '$_totalSessions'),
+            _TopStat(label: 'Active days', value: '$_activeDays'),
+            _TopStat(label: 'Total hits', value: '$_totalHits'),
+          ]),
         const SizedBox(height: 18),
-
         _MonthCard(
           focusedMonth: _focusedMonth,
           selectedDay: _selectedDay,
@@ -59,7 +166,6 @@ class _HistoryTabState extends State<HistoryTab> {
           onPickDay: (d) => setState(() => _selectedDay = d),
         ),
         const SizedBox(height: 18),
-
         Text(
           'Previous sessions',
           style: TextStyle(
@@ -69,36 +175,59 @@ class _HistoryTabState extends State<HistoryTab> {
           ),
         ),
         const SizedBox(height: 12),
-
-        ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: sessions.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, i) {
-            final s = sessions[i];
-            final previous = i > 0 ? sessions[i - 1] : null;
-            final baseline = sessions.first;
-
-            return InkWell(
+        if (sessions.isEmpty && !_loading)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color:
+                  isDark ? Colors.white.withValues(alpha: .06) : Colors.white,
               borderRadius: BorderRadius.circular(16),
-              onTap: () {
-                // Per-session view (this is where per-session graphs live)
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => FeedbackTab(
-                      current: s,
-                      previous: previous,
-                      baseline: baseline,
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: .10)
+                    : const Color(0xFFE5E7EB),
+              ),
+            ),
+            child: Text(
+              'No sessions on this day',
+              style: TextStyle(
+                color: subtitleColor,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          )
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: sessions.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, i) {
+              final s = sessions[i];
+              final previous = i > 0 ? sessions[i - 1] : null;
+              final baseline =
+                  _allSessions.isNotEmpty ? _allSessions.first : null;
+
+              return InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () {
+                  // Per-session view (this is where per-session graphs live)
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => FeedbackTab(
+                        current: s,
+                        previous: previous,
+                        baseline: baseline,
+                      ),
                     ),
-                  ),
-                );
-              },
-              child: _SessionTile(session: s),
-            );
-          },
-        ),
+                  );
+                },
+                child: _SessionTile(session: s),
+              );
+            },
+          ),
       ],
     );
   }
@@ -113,14 +242,11 @@ class _StatRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardBg =
-        isDark ? Colors.white.withValues(alpha: .06) : Colors.white;
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0xFFE5E7EB);
-    final labelColor = isDark
-        ? Colors.white.withValues(alpha: .85)
-        : const Color(0xFF6B7280);
+    final cardBg = isDark ? Colors.white.withValues(alpha: .06) : Colors.white;
+    final borderColor =
+        isDark ? Colors.white.withValues(alpha: .10) : const Color(0xFFE5E7EB);
+    final labelColor =
+        isDark ? Colors.white.withValues(alpha: .85) : const Color(0xFF6B7280);
     final valueColor = isDark ? Colors.white : const Color(0xFF111827);
 
     return Row(
@@ -200,11 +326,9 @@ class _MonthCard extends StatelessWidget {
 
     final totalCells = leading + daysInMonth;
 
-    final cardBg =
-        isDark ? Colors.white.withValues(alpha: .06) : Colors.white;
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0xFFE5E7EB);
+    final cardBg = isDark ? Colors.white.withValues(alpha: .06) : Colors.white;
+    final borderColor =
+        isDark ? Colors.white.withValues(alpha: .10) : const Color(0xFFE5E7EB);
     final monthTextColor = isDark ? Colors.white : const Color(0xFF111827);
 
     return Container(
@@ -235,13 +359,11 @@ class _MonthCard extends StatelessWidget {
           const SizedBox(height: 10),
           const _WeekHeader(),
           const SizedBox(height: 8),
-
           GridView.builder(
             shrinkWrap: true,
             itemCount: totalCells,
             physics: const NeverScrollableScrollPhysics(),
-            gridDelegate:
-                const SliverGridDelegateWithFixedCrossAxisCount(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
               mainAxisSpacing: 8,
               crossAxisSpacing: 8,
@@ -250,13 +372,11 @@ class _MonthCard extends StatelessWidget {
             itemBuilder: (_, i) {
               if (i < leading) return const SizedBox.shrink();
               final day = i - leading + 1;
-              final date =
-                  DateTime(focusedMonth.year, focusedMonth.month, day);
+              final date = DateTime(focusedMonth.year, focusedMonth.month, day);
               final isSel = _isSameDay(selectedDay, date);
 
-              final selBg = isDark
-                  ? const Color(0xFF6B8BFF)
-                  : const Color(0xFF4F46E5);
+              final selBg =
+                  isDark ? const Color(0xFF6B8BFF) : const Color(0xFF4F46E5);
               final normalBg = isDark
                   ? Colors.white.withValues(alpha: .08)
                   : const Color(0xFFF3F4FF);
@@ -287,8 +407,7 @@ class _MonthCard extends StatelessWidget {
                     '$day',
                     style: TextStyle(
                       color: textColor,
-                      fontWeight:
-                          isSel ? FontWeight.w900 : FontWeight.w700,
+                      fontWeight: isSel ? FontWeight.w900 : FontWeight.w700,
                     ),
                   ),
                 ),
@@ -398,18 +517,14 @@ class _SessionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardBg =
-        isDark ? Colors.white.withValues(alpha: .06) : Colors.white;
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0xFFE5E7EB);
+    final cardBg = isDark ? Colors.white.withValues(alpha: .06) : Colors.white;
+    final borderColor =
+        isDark ? Colors.white.withValues(alpha: .10) : const Color(0xFFE5E7EB);
     final titleColor = isDark ? Colors.white : const Color(0xFF111827);
-    final subtitleColor = isDark
-        ? Colors.white.withValues(alpha: .80)
-        : const Color(0xFF4B5563);
-    final iconBg = isDark
-        ? Colors.white.withValues(alpha: .10)
-        : const Color(0xFFF3F4FF);
+    final subtitleColor =
+        isDark ? Colors.white.withValues(alpha: .80) : const Color(0xFF4B5563);
+    final iconBg =
+        isDark ? Colors.white.withValues(alpha: .10) : const Color(0xFFF3F4FF);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
@@ -468,7 +583,7 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
-/* ───────── Simple model + mock ───────── */
+/* ───────── Simple model ───────── */
 
 class SessionSummary {
   /// Full DateTime of the session (start time).
@@ -491,30 +606,4 @@ class SessionSummary {
     required this.consistencyPct,
     required this.hits,
   });
-}
-
-List<SessionSummary> _mockSessionsForDay(DateTime day) {
-  final d = DateTime(day.year, day.month, day.day);
-  return [
-    SessionSummary(
-      id: 's1',
-      date: d,
-      title: 'Evening Drill',
-      avgSpeedKmh: 245,
-      maxSpeedKmh: 302,
-      sweetSpotPct: .58,
-      consistencyPct: .72,
-      hits: 420,
-    ),
-    SessionSummary(
-      id: 's2',
-      date: d,
-      title: 'Singles',
-      avgSpeedKmh: 251,
-      maxSpeedKmh: 310,
-      sweetSpotPct: .61,
-      consistencyPct: .75,
-      hits: 465,
-    ),
-  ];
 }

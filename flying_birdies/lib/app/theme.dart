@@ -39,7 +39,6 @@ class AppTheme {
       brightness: Brightness.dark,
       primary: seed,
       surface: surfaceDark,
-      background: bgDark,
       onSurface: Colors.white.withValues(alpha: .90),
     );
 
@@ -157,7 +156,6 @@ class AppTheme {
       brightness: Brightness.light,
       primary: seed,
       surface: surfaceLight,
-      background: bgLight,
       onSurface: const Color(0xFF111827),
     );
 

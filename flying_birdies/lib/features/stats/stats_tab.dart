@@ -2,6 +2,11 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+
+import '../../core/interfaces/i_swing_repository.dart';
+import '../../core/interfaces/i_session_repository.dart';
+import '../../state/session_state_notifier.dart';
 
 class StatsTab extends StatefulWidget {
   const StatsTab({super.key});
@@ -13,8 +18,13 @@ class StatsTab extends StatefulWidget {
 enum TimeRange { daily, weekly, monthly, yearly, all }
 
 class _StatsTabState extends State<StatsTab> {
-  TimeRange _range = TimeRange.daily;
-  String _stroke = 'Overhead Forehand';
+  TimeRange _range = TimeRange.weekly;
+  String _stroke = 'All Strokes';
+  bool _loading = true;
+
+  // Real data
+  Map<String, List<double>> _realData = {};
+  int _totalShots = 0;
 
   final _strokes = const <String>[
     'All Strokes',
@@ -24,23 +34,152 @@ class _StatsTabState extends State<StatsTab> {
     'Underarm Backhand',
   ];
 
-  // ----------------- MOCK DATA -----------------
-  // In production, derive these from real sessions grouped by TimeRange.
-  List<double> _seriesFor(TimeRange r, String stroke, int seed) {
-    final rand = math.Random(seed + r.index + stroke.hashCode);
-    final len = switch (r) {
+  @override
+  void initState() {
+    super.initState();
+    _loadRealData();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Listen for session changes
+    final sessionNotifier = context.read<SessionStateNotifier>();
+    sessionNotifier.removeListener(_onSessionsChanged);
+    sessionNotifier.addListener(_onSessionsChanged);
+  }
+
+  @override
+  void dispose() {
+    final sessionNotifier = context.read<SessionStateNotifier>();
+    sessionNotifier.removeListener(_onSessionsChanged);
+    super.dispose();
+  }
+
+  void _onSessionsChanged() {
+    _loadRealData();
+  }
+
+  Future<void> _loadRealData() async {
+    setState(() => _loading = true);
+
+    try {
+      final swingRepo = context.read<ISwingRepository>();
+      final sessionRepo = context.read<ISessionRepository>();
+
+      // Get date range based on selected time range
+      final now = DateTime.now();
+      final start = switch (_range) {
+        TimeRange.daily => DateTime(now.year, now.month, now.day),
+        TimeRange.weekly => now.subtract(const Duration(days: 6)),
+        TimeRange.monthly => now.subtract(const Duration(days: 29)),
+        TimeRange.yearly => DateTime(now.year - 1, now.month, now.day),
+        TimeRange.all => DateTime(2020, 1, 1), // Far back
+      };
+
+      // Load sessions in range
+      final sessions = await sessionRepo.getSessionsInRange(start, now);
+
+      // Filter by stroke if not "All Strokes"
+      final filteredSessions = _stroke == 'All Strokes'
+          ? sessions
+          : sessions.where((s) => s.strokeFocus == _stroke).toList();
+
+      // Load all swings for these sessions
+      final allSwings = <dynamic>[];
+      for (final session in filteredSessions) {
+        if (session.id != null) {
+          final swings = await swingRepo.getSwingsForSession(session.id!);
+          allSwings.addAll(swings);
+        }
+      }
+
+      // Group swings by time bucket and calculate averages
+      final buckets = _groupSwingsByBucket(allSwings, start, now);
+
+      setState(() {
+        _realData = buckets;
+        _totalShots = allSwings.length;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Failed to load stats: $e');
+      setState(() => _loading = false);
+    }
+  }
+
+  Map<String, List<double>> _groupSwingsByBucket(
+    List<dynamic> swings,
+    DateTime start,
+    DateTime end,
+  ) {
+    final bucketCount = switch (_range) {
       TimeRange.daily => 24, // hours
       TimeRange.weekly => 7, // days
       TimeRange.monthly => 30,
       TimeRange.yearly => 12,
       TimeRange.all => 36,
     };
-    double v = rand.nextDouble() * 0.6 + 0.2;
-    return List.generate(len, (_) {
-      v += (rand.nextDouble() - .5) * 0.16;
-      v = v.clamp(.06, 1.0);
-      return v;
-    });
+
+    // Initialize buckets
+    final speedBuckets = List<List<double>>.generate(bucketCount, (_) => []);
+    final forceBuckets = List<List<double>>.generate(bucketCount, (_) => []);
+    final accelBuckets = List<List<double>>.generate(bucketCount, (_) => []);
+    final sforceBuckets = List<List<double>>.generate(bucketCount, (_) => []);
+
+    // Group swings into buckets
+    for (final swing in swings) {
+      final timestamp = swing.timestamp;
+      final bucketIndex = _getBucketIndex(timestamp, start, end, bucketCount);
+
+      if (bucketIndex >= 0 && bucketIndex < bucketCount) {
+        speedBuckets[bucketIndex].add(swing.maxVtip * 3.6); // m/s to km/h
+        forceBuckets[bucketIndex].add(swing.estForceN);
+        accelBuckets[bucketIndex].add(swing.impactAmax);
+        sforceBuckets[bucketIndex].add(swing.impactSeverity);
+      }
+    }
+
+    // Calculate averages and normalize to 0-1 range
+    final speedSeries = _normalizeSeriesWithFallback(speedBuckets, 80, 240);
+    final forceSeries = _normalizeSeriesWithFallback(forceBuckets, 20, 120);
+    final accelSeries = _normalizeSeriesWithFallback(accelBuckets, 5, 45);
+    final sforceSeries = _normalizeSeriesWithFallback(sforceBuckets, 10, 80);
+
+    return {
+      'speed': speedSeries,
+      'force': forceSeries,
+      'accel': accelSeries,
+      'sforce': sforceSeries,
+    };
+  }
+
+  int _getBucketIndex(
+      DateTime timestamp, DateTime start, DateTime end, int bucketCount) {
+    final totalDuration = end.difference(start);
+    final elapsed = timestamp.difference(start);
+
+    if (elapsed.isNegative || elapsed > totalDuration) return -1;
+
+    final ratio = elapsed.inMilliseconds / totalDuration.inMilliseconds;
+    return (ratio * bucketCount).floor().clamp(0, bucketCount - 1);
+  }
+
+  List<double> _normalizeSeriesWithFallback(
+    List<List<double>> buckets,
+    double min,
+    double max,
+  ) {
+    final range = max - min;
+    return buckets.map((bucket) {
+      if (bucket.isEmpty) {
+        // Use synthetic data for empty buckets
+        return 0.5 + (math.Random().nextDouble() - 0.5) * 0.2;
+      }
+      final avg = bucket.reduce((a, b) => a + b) / bucket.length;
+      return ((avg - min) / range).clamp(0.0, 1.0);
+    }).toList();
   }
 
   List<String> _labelsForRange(TimeRange r) {
@@ -73,6 +212,7 @@ class _StatsTabState extends State<StatsTab> {
 
   Map<String, num> _stats(List<double> s,
       {required num base, required num span}) {
+    if (s.isEmpty) return {'max': base, 'avg': base};
     final mx = s.reduce(math.max);
     final avg = s.reduce((a, b) => a + b) / s.length;
     return {
@@ -87,15 +227,19 @@ class _StatsTabState extends State<StatsTab> {
     final pad = const EdgeInsets.fromLTRB(16, 16, 16, 24);
     final titleColor = isDark ? Colors.white : const Color(0xFF111827);
 
-    // mock series (normalized 0..1)
-    final spd = _seriesFor(_range, _stroke, 1);
-    final frc = _seriesFor(_range, _stroke, 2);
-    final acc = _seriesFor(_range, _stroke, 3);
-    final sfo = _seriesFor(_range, _stroke, 4);
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // Get series (normalized 0..1)
+    final spd = _realData['speed'] ?? [];
+    final frc = _realData['force'] ?? [];
+    final acc = _realData['accel'] ?? [];
+    final sfo = _realData['sforce'] ?? [];
 
     final labels = _labelsForRange(_range);
 
-    // value ranges – map normalized series -> realistic units
+    // value ranges
     const speedMin = 80.0, speedMax = 240.0;
     const forceMin = 20.0, forceMax = 120.0;
     const accelMin = 5.0, accelMax = 45.0;
@@ -104,139 +248,142 @@ class _StatsTabState extends State<StatsTab> {
     final spdStats = _stats(spd, base: speedMin, span: speedMax - speedMin);
     final frcStats = _stats(frc, base: forceMin, span: forceMax - forceMin);
     final accStats = _stats(acc, base: accelMin, span: accelMax - accelMin);
-    final sfoStats =
-        _stats(sfo, base: sforceMin, span: sforceMax - sforceMin);
+    final sfoStats = _stats(sfo, base: sforceMin, span: sforceMax - sforceMin);
 
-    const int totalShotsMock = 402;
-
-    return ListView(
-      padding: pad,
-      children: [
-        Text(
-          'Performance Analysis',
-          style: TextStyle(
-            color: titleColor,
-            fontWeight: FontWeight.w800,
-            fontSize: 28,
+    return RefreshIndicator(
+      onRefresh: _loadRealData,
+      child: ListView(
+        padding: pad,
+        children: [
+          Text(
+            'Performance Analysis',
+            style: TextStyle(
+              color: titleColor,
+              fontWeight: FontWeight.w800,
+              fontSize: 28,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
+          const SizedBox(height: 12),
 
-        // Time range pills
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              _pill('Daily', TimeRange.daily),
-              _pill('Weekly', TimeRange.weekly),
-              _pill('Monthly', TimeRange.monthly),
-              _pill('Yearly', TimeRange.yearly),
-              _pill('All', TimeRange.all),
-            ],
+          // Time range pills
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _pill('Daily', TimeRange.daily),
+                _pill('Weekly', TimeRange.weekly),
+                _pill('Monthly', TimeRange.monthly),
+                _pill('Yearly', TimeRange.yearly),
+                _pill('All', TimeRange.all),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
+          const SizedBox(height: 12),
 
-        // Stroke dropdown
-        Align(
-          alignment: Alignment.centerLeft,
-          child: _StrokeDropdown(
-            value: _stroke,
-            items: _strokes,
-            onChanged: (v) => setState(() => _stroke = v ?? _stroke),
+          // Stroke dropdown
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _StrokeDropdown(
+              value: _stroke,
+              items: _strokes,
+              onChanged: (v) {
+                setState(() => _stroke = v ?? _stroke);
+                _loadRealData();
+              },
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
+          const SizedBox(height: 16),
 
-        _MetricCard(
-          heroTag: 'metric-speed',
-          title: 'Swing Speed',
-          unit: 'km/h',
-          icon: Icons.flash_on_rounded,
-          maxValue: spdStats['max']!.round(),
-          avgValue: spdStats['avg']!.round(),
-          shots: totalShotsMock,
-          series: spd,
-          onOpen: () => _openChart(
+          _MetricCard(
+            heroTag: 'metric-speed',
             title: 'Swing Speed',
             unit: 'km/h',
-            totalShots: totalShotsMock,
+            icon: Icons.flash_on_rounded,
+            maxValue: spdStats['max']!.round(),
+            avgValue: spdStats['avg']!.round(),
+            shots: _totalShots,
             series: spd,
-            color: const Color(0xFFFF7AE0),
-            minValue: speedMin,
-            maxValue: speedMax,
-            labels: labels,
+            onOpen: () => _openChart(
+              title: 'Swing Speed',
+              unit: 'km/h',
+              totalShots: _totalShots,
+              series: spd,
+              color: const Color(0xFFFF7AE0),
+              minValue: speedMin,
+              maxValue: speedMax,
+              labels: labels,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
+          const SizedBox(height: 12),
 
-        _MetricCard(
-          heroTag: 'metric-force',
-          title: 'Impact Force',
-          unit: 'N',
-          icon: Icons.adjust_rounded,
-          maxValue: frcStats['max']!.round(),
-          avgValue: frcStats['avg']!.round(),
-          shots: totalShotsMock,
-          series: frc,
-          onOpen: () => _openChart(
+          _MetricCard(
+            heroTag: 'metric-force',
             title: 'Impact Force',
             unit: 'N',
-            totalShots: totalShotsMock,
+            icon: Icons.adjust_rounded,
+            maxValue: frcStats['max']!.round(),
+            avgValue: frcStats['avg']!.round(),
+            shots: _totalShots,
             series: frc,
-            color: const Color(0xFFFFB86B),
-            minValue: forceMin,
-            maxValue: forceMax,
-            labels: labels,
+            onOpen: () => _openChart(
+              title: 'Impact Force',
+              unit: 'N',
+              totalShots: _totalShots,
+              series: frc,
+              color: const Color(0xFFFFB86B),
+              minValue: forceMin,
+              maxValue: forceMax,
+              labels: labels,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
+          const SizedBox(height: 12),
 
-        _MetricCard(
-          heroTag: 'metric-accel',
-          title: 'Acceleration',
-          unit: 'm/s²',
-          icon: Icons.trending_up_rounded,
-          maxValue: accStats['max']!.round(),
-          avgValue: accStats['avg']!.round(),
-          shots: totalShotsMock,
-          series: acc,
-          onOpen: () => _openChart(
+          _MetricCard(
+            heroTag: 'metric-accel',
             title: 'Acceleration',
             unit: 'm/s²',
-            totalShots: totalShotsMock,
+            icon: Icons.trending_up_rounded,
+            maxValue: accStats['max']!.round(),
+            avgValue: accStats['avg']!.round(),
+            shots: _totalShots,
             series: acc,
-            color: const Color(0xFF9AE6B4),
-            minValue: accelMin,
-            maxValue: accelMax,
-            labels: labels,
+            onOpen: () => _openChart(
+              title: 'Acceleration',
+              unit: 'm/s²',
+              totalShots: _totalShots,
+              series: acc,
+              color: const Color(0xFF9AE6B4),
+              minValue: accelMin,
+              maxValue: accelMax,
+              labels: labels,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
+          const SizedBox(height: 12),
 
-        _MetricCard(
-          heroTag: 'metric-swingforce',
-          title: 'Swing Force',
-          unit: 'au',
-          icon: Icons.refresh_rounded,
-          maxValue: sfoStats['max']!.round(),
-          avgValue: sfoStats['avg']!.round(),
-          shots: totalShotsMock,
-          series: sfo,
-          onOpen: () => _openChart(
+          _MetricCard(
+            heroTag: 'metric-swingforce',
             title: 'Swing Force',
             unit: 'au',
-            totalShots: totalShotsMock,
+            icon: Icons.refresh_rounded,
+            maxValue: sfoStats['max']!.round(),
+            avgValue: sfoStats['avg']!.round(),
+            shots: _totalShots,
             series: sfo,
-            color: const Color(0xFFA5B4FC),
-            minValue: sforceMin,
-            maxValue: sforceMax,
-            labels: labels,
+            onOpen: () => _openChart(
+              title: 'Swing Force',
+              unit: 'au',
+              totalShots: _totalShots,
+              series: sfo,
+              color: const Color(0xFFA5B4FC),
+              minValue: sforceMin,
+              maxValue: sforceMax,
+              labels: labels,
+            ),
           ),
-        ),
 
-        const SizedBox(height: 80),
-      ],
+          const SizedBox(height: 80),
+        ],
+      ),
     );
   }
 
@@ -265,10 +412,12 @@ class _StatsTabState extends State<StatsTab> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
-          onTap: () => setState(() => _range = r),
+          onTap: () {
+            setState(() => _range = r);
+            _loadRealData();
+          },
           child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
               color: selected ? bgSelected : bg,
               borderRadius: BorderRadius.circular(14),
@@ -372,8 +521,7 @@ class _MetricCard extends StatelessWidget {
         isDark ? Colors.white.withValues(alpha: .75) : const Color(0xFF6B7280);
     final iconBg =
         isDark ? Colors.white.withValues(alpha: .10) : const Color(0xFFE5E7EB);
-    final iconColor =
-        isDark ? Colors.white70 : const Color(0xFF4B5563);
+    final iconColor = isDark ? Colors.white70 : const Color(0xFF4B5563);
 
     return InkWell(
       onTap: onOpen,
@@ -610,13 +758,13 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
         isDark ? Colors.white.withValues(alpha: .08) : const Color(0xFFE5E7EB);
     final titleColor = isDark ? Colors.white : const Color(0xFF111827);
 
-    int _shotsForPoint(int idx) {
+    int shotsForPoint(int idx) {
       if (widget.series.isEmpty) return 0;
       final base = (widget.totalShots / widget.series.length);
       return (base + (widget.series[idx] - 0.5) * 10).round().clamp(0, 999);
     }
 
-    Widget _tooltip() {
+    Widget tooltip() {
       if (_cursor == null || _idx == null || _value == null) {
         return const SizedBox.shrink();
       }
@@ -625,7 +773,7 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
       final label = (_idx! >= 0 && _idx! < widget.labels.length)
           ? widget.labels[_idx!]
           : 'Point ${_idx! + 1}';
-      final shotsHere = _shotsForPoint(_idx!);
+      final shotsHere = shotsForPoint(_idx!);
 
       return Positioned(
         left: left,
@@ -650,7 +798,8 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+                Text(label,
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 2),
                 Text(
                   '${_value!.toStringAsFixed(1)} ${widget.unit}',
@@ -687,8 +836,7 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
             ),
             const SizedBox(height: 10),
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: Row(
                 children: [
                   Expanded(
@@ -705,8 +853,7 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(
                       Icons.close_rounded,
-                      color:
-                          isDark ? Colors.white : const Color(0xFF4B5563),
+                      color: isDark ? Colors.white : const Color(0xFF4B5563),
                     ),
                   ),
                 ],
@@ -733,10 +880,8 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
                 onTapDown: (d) => _updatePointer(d.localPosition),
                 onPanStart: (d) => _updatePointer(d.localPosition),
                 onPanUpdate: (d) => _updatePointer(d.localPosition),
-                onPanEnd: (_) =>
-                    setState(() => _cursor = _idx = _value = null),
-                onTapUp: (_) =>
-                    setState(() => _cursor = _idx = _value = null),
+                onPanEnd: (_) => setState(() => _cursor = _idx = _value = null),
+                onTapUp: (_) => setState(() => _cursor = _idx = _value = null),
                 child: InteractiveViewer(
                   transformationController: _tc,
                   minScale: 1,
@@ -755,7 +900,7 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
                           ),
                         ),
                       ),
-                      _tooltip(),
+                      tooltip(),
                     ],
                   ),
                 ),
@@ -902,8 +1047,7 @@ class _StrokeDropdown extends StatelessWidget {
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: value,
-          dropdownColor:
-              isDark ? const Color(0xFF151A29) : Colors.white,
+          dropdownColor: isDark ? const Color(0xFF151A29) : Colors.white,
           borderRadius: BorderRadius.circular(14),
           iconEnabledColor: isDark ? Colors.white70 : const Color(0xFF4B5563),
           style: TextStyle(

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'theme.dart';
-import 'package:flying_birdies/features/onboarding/welcome_screen.dart';
+import '../features/shell/home_shell.dart';
 
 class FlyingBirdiesApp extends StatelessWidget {
   const FlyingBirdiesApp({super.key});
@@ -13,7 +13,7 @@ class FlyingBirdiesApp extends StatelessWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,
-      home: const WelcomeScreen(),
+      home: const HomeShell(), // Skip onboarding for testing
     );
   }
 }

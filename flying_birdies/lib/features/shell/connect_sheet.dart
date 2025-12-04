@@ -243,20 +243,19 @@ class _ConnectSheetState extends State<_ConnectSheet> {
 
   String get _ctaText {
     if (_connected) return 'Done';
-    if (_scanning) return 'Working...';
-    if (_selected == null && _devices.isEmpty) return 'Scan for Devices';
-    if (_selected == null && _devices.isNotEmpty) return 'Scan Again';
-    return 'Pair & Connect';
+    if (_selected != null) return 'Pair & Connect';
+    if (_devices.isEmpty) return 'Scan for Devices';
+    return 'Scan Again';
   }
 
   VoidCallback? get _ctaAction {
     if (_connected) {
       return () => Navigator.of(context).pop(_selected);
     }
-    if (_scanning) return null;
-    if (_selected == null && _devices.isEmpty) return _startScan;
-    if (_selected == null && _devices.isNotEmpty) return _startScan;
-    return _connect;
+    // Allow connecting even while scanning if a device is selected
+    if (_selected != null) return _connect;
+    if (_devices.isEmpty) return _startScan;
+    return _startScan; // Scan again if devices exist but none selected
   }
 
   @override
@@ -457,7 +456,7 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                                         device: d,
                                         selected: _selected?.id == d.id,
                                         onTap: () {
-                                          // Only select the device, don't connect yet
+                                          // Only select the device, don't auto-connect
                                           if (mounted) {
                                             setState(() => _selected = d);
                                           }

@@ -143,6 +143,16 @@ class InteractiveLineChart extends StatelessWidget {
 
             // X-axis (bottom)
             bottomTitles: AxisTitles(
+              axisNameWidget: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Swing #',
+                  style: theme.axisLabelStyle.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              axisNameSize: 20,
               sideTitles: SideTitles(
                 showTitles: true,
                 reservedSize: 30,
@@ -226,8 +236,9 @@ class InteractiveLineChart extends StatelessWidget {
                   if (index < 0 || index >= dataPoints.length) return null;
 
                   final point = dataPoints[index];
+                  // Show just the swing number and value, no "Shots:" label
                   return LineTooltipItem(
-                    '${point.label}\n${point.y.toStringAsFixed(1)} $yUnit${point.shotCount != null ? '\nShots: ${point.shotCount}' : ''}',
+                    'Swing ${index + 1}\n${point.y.toStringAsFixed(1)} $yUnit',
                     theme.tooltipStyle,
                   );
                 }).toList();
@@ -273,14 +284,12 @@ class InteractiveLineChart extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final label = xLabels != null && index < xLabels!.length
-        ? xLabels![index]
-        : dataPoints[index].label;
-
+    // Don't show individual swing labels - they clutter the chart
+    // Just show the index number for reference
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Text(
-        label,
+        '${index + 1}',
         style: theme.axisLabelStyle,
         textAlign: TextAlign.center,
         textScaler: TextScaler.noScaling, // Prevent excessive scaling in charts

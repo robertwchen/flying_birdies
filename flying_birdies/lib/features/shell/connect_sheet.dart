@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import '../../app/theme.dart';
 import '../../core/interfaces/i_ble_service.dart';
+import '../../core/interfaces/i_connection_persistence_service.dart';
 import '../../state/connection_state_notifier.dart';
 
 class BleDevice {
@@ -34,6 +35,7 @@ class _ConnectSheet extends StatefulWidget {
 class _ConnectSheetState extends State<_ConnectSheet> {
   late final IBleService _bleService;
   late final ConnectionStateNotifier _connectionNotifier;
+  late final IConnectionPersistenceService _persistenceService;
 
   bool _scanning = false;
   bool _connected = false;
@@ -46,6 +48,7 @@ class _ConnectSheetState extends State<_ConnectSheet> {
     super.initState();
     _bleService = context.read<IBleService>();
     _connectionNotifier = context.read<ConnectionStateNotifier>();
+    _persistenceService = context.read<IConnectionPersistenceService>();
 
     // Check if already connected
     if (_connectionNotifier.isConnected) {
@@ -140,6 +143,12 @@ class _ConnectSheetState extends State<_ConnectSheet> {
       // Start data collection
       await _bleService.startDataCollection();
 
+      // Save device for auto-reconnect
+      await _persistenceService.saveLastDevice(
+        _selected!.id,
+        _selected!.name,
+      );
+
       // Update connection state notifier
       _connectionNotifier.updateConnectionState(
         DeviceConnectionState.connected,
@@ -163,6 +172,34 @@ class _ConnectSheetState extends State<_ConnectSheet> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to connect: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _forgetDevice() async {
+    try {
+      // Clear saved device
+      await _persistenceService.clearLastDevice();
+
+      // Disconnect from current device
+      await _bleService.disconnect();
+
+      if (mounted) {
+        setState(() {
+          _connected = false;
+          _selected = null;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Device forgotten')),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error forgetting device: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to forget device: $e')),
         );
       }
     }
@@ -456,6 +493,29 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                                     ),
                                   ),
                                 ],
+                              ),
+                              const SizedBox(height: 12),
+                              // Forget Device button
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.delete_outline,
+                                      size: 18),
+                                  label: const Text('Forget Device'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFFF0433A),
+                                    side: BorderSide(
+                                      color: const Color(0xFFF0433A)
+                                          .withValues(alpha: .5),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  onPressed: _forgetDevice,
+                                ),
                               ),
                             ],
 

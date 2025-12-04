@@ -1,6 +1,7 @@
 import 'package:provider/provider.dart';
 import 'package:provider/single_child_widget.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Core
 import '../core/logger.dart';
@@ -15,6 +16,7 @@ import '../services/ble_service.dart';
 import '../services/analytics_service.dart';
 import '../services/session_service.dart';
 import '../services/sync_service.dart';
+import '../services/connection_persistence_service.dart';
 
 // Service Interfaces
 import '../core/interfaces/i_ble_service.dart';
@@ -23,6 +25,7 @@ import '../core/interfaces/i_session_service.dart';
 import '../core/interfaces/i_sync_service.dart';
 import '../core/interfaces/i_session_repository.dart';
 import '../core/interfaces/i_swing_repository.dart';
+import '../core/interfaces/i_connection_persistence_service.dart';
 
 // State Management
 import '../state/connection_state_notifier.dart';
@@ -32,8 +35,22 @@ import '../state/swing_data_notifier.dart';
 /// Service Locator for Dependency Injection
 /// Sets up all providers for the app
 class ServiceLocator {
+  // Store SharedPreferences instance
+  static SharedPreferences? _sharedPreferences;
+
+  /// Initialize SharedPreferences (must be called before createProviders)
+  static Future<void> initialize() async {
+    _sharedPreferences = await SharedPreferences.getInstance();
+  }
+
   /// Create all providers for the app
   static List<SingleChildWidget> createProviders() {
+    if (_sharedPreferences == null) {
+      throw StateError(
+        'ServiceLocator.initialize() must be called before createProviders()',
+      );
+    }
+
     // Create logger
     final logger = ConsoleLogger('FlyingBirdies');
 
@@ -48,6 +65,12 @@ class ServiceLocator {
     final connectionStateNotifier = ConnectionStateNotifier();
     final sessionStateNotifier = SessionStateNotifier();
     final swingDataNotifier = SwingDataNotifier();
+
+    // Create connection persistence service
+    final connectionPersistenceService = ConnectionPersistenceService(
+      _sharedPreferences!,
+      logger,
+    );
 
     // Create services (inject connectionStateNotifier into BleService)
     final bleService = BleService(
@@ -81,6 +104,12 @@ class ServiceLocator {
       Provider<ISessionService>.value(value: sessionService),
       Provider<SyncService>.value(value: syncService),
       Provider<ISyncService>.value(value: syncService),
+      Provider<ConnectionPersistenceService>.value(
+        value: connectionPersistenceService,
+      ),
+      Provider<IConnectionPersistenceService>.value(
+        value: connectionPersistenceService,
+      ),
 
       // State Notifiers
       ChangeNotifierProvider<ConnectionStateNotifier>.value(
@@ -96,7 +125,7 @@ class ServiceLocator {
   }
 
   /// Dispose all services
-  static void dispose(providers) {
+  static void dispose(List<SingleChildWidget> providers) {
     // Services will be disposed when providers are disposed
     // This is handled automatically by Provider
   }

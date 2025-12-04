@@ -37,6 +37,14 @@ abstract class IBleService {
   /// Stop collecting IMU data
   void stopDataCollection();
 
+  /// Attempt to reconnect to a previously connected device
+  /// Returns true if successful, false otherwise
+  /// Timeout defaults to 10 seconds
+  Future<bool> autoReconnect(
+    String deviceId, {
+    Duration timeout = const Duration(seconds: 10),
+  });
+
   /// Dispose resources
   void dispose();
 }

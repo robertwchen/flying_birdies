@@ -7,6 +7,13 @@ import '../core/logger.dart';
 import '../core/exceptions.dart';
 import '../state/connection_state_notifier.dart';
 
+class TimeoutException implements Exception {
+  final String message;
+  TimeoutException(this.message);
+  @override
+  String toString() => message;
+}
+
 /// BLE Service for connecting to Flying Birdies IMU device
 class BleService implements IBleService {
   final FlutterReactiveBle _ble;
@@ -402,6 +409,67 @@ class BleService implements IBleService {
     }
   }
 
+  /// Attempt to reconnect to a previously connected device
+  @override
+  Future<bool> autoReconnect(
+    String deviceId, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    _logger.info(
+      'Attempting auto-reconnect',
+      context: {'deviceId': deviceId, 'timeout': timeout.inSeconds},
+    );
+
+    try {
+      // Update state to connecting
+      _connectionState = DeviceConnectionState.connecting;
+      _connectionStateController.add(DeviceConnectionState.connecting);
+
+      // Update ConnectionStateNotifier
+      _connectionStateNotifier?.updateConnectionState(
+        DeviceConnectionState.connecting,
+        deviceId: deviceId,
+        deviceName: 'Reconnecting...',
+      );
+
+      // Attempt connection with timeout
+      await connectToDevice(deviceId).timeout(
+        timeout,
+        onTimeout: () {
+          _logger.warning('Auto-reconnect timeout');
+          throw TimeoutException(
+              'Connection timeout after ${timeout.inSeconds}s');
+        },
+      );
+
+      // Wait for connection to stabilize
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Start data collection
+      await startDataCollection();
+
+      _logger.info('Auto-reconnect successful');
+      return true;
+    } catch (e, stackTrace) {
+      _logger.error(
+        'Auto-reconnect failed',
+        error: e,
+        stackTrace: stackTrace,
+        context: {'deviceId': deviceId},
+      );
+
+      // Update state to disconnected on failure
+      _connectionState = DeviceConnectionState.disconnected;
+      _connectionStateController.add(DeviceConnectionState.disconnected);
+
+      _connectionStateNotifier?.updateConnectionState(
+        DeviceConnectionState.disconnected,
+      );
+
+      return false;
+    }
+  }
+
   /// Disconnect from device
   @override
   Future<void> disconnect() async {
@@ -426,6 +494,7 @@ class BleService implements IBleService {
   }
 
   /// Clean up resources
+  @override
   void dispose() {
     _logger.info('Disposing BleService');
     _connectionMonitor?.cancel();

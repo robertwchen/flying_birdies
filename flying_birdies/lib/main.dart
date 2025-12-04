@@ -8,6 +8,8 @@ import 'app/theme_controller.dart';
 import 'app/service_locator.dart';
 import 'services/local_auth.dart';
 import 'state/connection_state_notifier.dart';
+import 'core/interfaces/i_connection_persistence_service.dart';
+import 'core/interfaces/i_ble_service.dart';
 
 // Backend services
 import 'services/ble_service.dart';
@@ -31,6 +33,9 @@ Future<void> main() async {
 
   // load saved theme preference (system / light / dark)
   await ThemeController.instance.load();
+
+  // Initialize ServiceLocator (SharedPreferences)
+  await ServiceLocator.initialize();
 
   // Initialize backend services
   // Request BLE permissions early
@@ -58,6 +63,10 @@ class _StrikeProAppState extends State<StrikeProApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Attempt auto-reconnect after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _attemptAutoReconnect();
+    });
   }
 
   @override
@@ -73,6 +82,56 @@ class _StrikeProAppState extends State<StrikeProApp>
     // When app resumes from background, verify connection state
     if (state == AppLifecycleState.resumed) {
       _verifyConnectionState();
+    }
+  }
+
+  Future<void> _attemptAutoReconnect() async {
+    try {
+      final context = _navigatorKey.currentContext;
+      if (context == null) return;
+
+      final persistenceService = context.read<IConnectionPersistenceService>();
+      final bleService = context.read<IBleService>();
+      final connectionNotifier = context.read<ConnectionStateNotifier>();
+
+      // Check if we have a last device
+      final lastDevice = await persistenceService.getLastDevice();
+      if (lastDevice == null) {
+        debugPrint('No last device found for auto-reconnect');
+        return;
+      }
+
+      // Check if device was connected recently (within last 7 days)
+      final daysSinceConnection =
+          DateTime.now().difference(lastDevice.lastConnected).inDays;
+      if (daysSinceConnection > 7) {
+        debugPrint(
+          'Last device too old ($daysSinceConnection days), clearing',
+        );
+        await persistenceService.clearLastDevice();
+        return;
+      }
+
+      debugPrint(
+        'Attempting auto-reconnect to ${lastDevice.name} (${lastDevice.id})',
+      );
+
+      // Attempt reconnection
+      final success = await bleService.autoReconnect(lastDevice.id);
+
+      if (success) {
+        debugPrint('Auto-reconnect successful');
+        // Update connection state notifier
+        connectionNotifier.updateConnectionState(
+          DeviceConnectionState.connected,
+          deviceId: lastDevice.id,
+          deviceName: lastDevice.name,
+        );
+      } else {
+        debugPrint('Auto-reconnect failed');
+      }
+    } catch (e) {
+      debugPrint('Error during auto-reconnect: $e');
     }
   }
 

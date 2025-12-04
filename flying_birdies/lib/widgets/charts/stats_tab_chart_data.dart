@@ -1,4 +1,5 @@
 import 'chart_data_point.dart';
+import '../../models/bucket_data.dart';
 
 /// Time range options for Stats tab
 enum TimeRange { daily, weekly, monthly, yearly, all }
@@ -8,9 +9,9 @@ enum TimeRange { daily, weekly, monthly, yearly, all }
 /// Converts bucket data (aggregated swing metrics over time) into chart data points.
 /// Handles time-based labels and shot count calculations.
 class StatsTabChartData {
-  /// Bucket data: map of metric keys to normalized values (0-1 range)
+  /// Bucket data: map of metric keys to BucketData objects
   /// Keys: 'speed', 'force', 'accel', 'sforce'
-  final Map<String, List<double>> bucketData;
+  final Map<String, BucketData> bucketData;
 
   /// Labels for each bucket (e.g., "Mon 1", "10:00", "Jan")
   final List<String> labels;
@@ -32,7 +33,10 @@ class StatsTabChartData {
   ///
   /// [metricKey] should be one of: 'speed', 'force', 'accel', 'sforce'
   List<ChartDataPoint> getDataPoints(String metricKey) {
-    final series = bucketData[metricKey] ?? [];
+    final data = bucketData[metricKey];
+    if (data == null) return [];
+
+    final series = data.normalizedValues;
 
     return series.asMap().entries.map((e) {
       final index = e.key;
@@ -45,7 +49,8 @@ class StatsTabChartData {
         x: index.toDouble(),
         y: actualValue,
         label: index < labels.length ? labels[index] : 'Bucket $index',
-        shotCount: _calculateShotsForBucket(index, series.length),
+        shotCount: data.shotCounts[index], // Use actual shot count from bucket
+        timestamp: data.timestamps[index], // Include timestamp
       );
     }).toList();
   }
@@ -62,14 +67,6 @@ class StatsTabChartData {
     };
 
     return min + (normalized * (max - min));
-  }
-
-  /// Calculate approximate shots for a bucket
-  ///
-  /// Distributes total shots evenly across buckets
-  int _calculateShotsForBucket(int bucketIndex, int totalBuckets) {
-    if (totalBuckets == 0) return 0;
-    return (totalShots / totalBuckets).round();
   }
 
   /// Get unit string for a metric

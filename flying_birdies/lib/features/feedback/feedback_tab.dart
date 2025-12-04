@@ -63,7 +63,13 @@ class _FeedbackTabState extends State<FeedbackTab> {
     _current = widget.current;
     _previous = widget.previous;
     _baseline = widget.baseline;
-    if (_current == null) _autoLoad();
+
+    // Always load swing data if we have a session
+    if (_current != null) {
+      _loadSwingDataForSession(_current!);
+    } else {
+      _autoLoad(); // Load latest session
+    }
   }
 
   @override
@@ -79,16 +85,9 @@ class _FeedbackTabState extends State<FeedbackTab> {
         _baseline = widget.baseline;
       });
 
-      // Reload swing data for new session
-      if (_current != null) {
-        final sessionId = int.tryParse(_current!.id);
-        if (sessionId != null) {
-          _loadSwingData(sessionId).then((swings) {
-            if (mounted) {
-              setState(() => _swingData = swings);
-            }
-          });
-        }
+      // Reload swing data if session changed
+      if (_current != null && _current!.id != oldWidget.current?.id) {
+        _loadSwingDataForSession(_current!);
       }
     }
     // If we don't have current data, try to load it
@@ -123,6 +122,21 @@ class _FeedbackTabState extends State<FeedbackTab> {
       });
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Load swing data for a specific session
+  Future<void> _loadSwingDataForSession(SessionSummary session) async {
+    final sessionId = int.tryParse(session.id);
+    if (sessionId != null) {
+      setState(() => _loading = true);
+      final swings = await _loadSwingData(sessionId);
+      if (mounted) {
+        setState(() {
+          _swingData = swings;
+          _loading = false;
+        });
+      }
     }
   }
 

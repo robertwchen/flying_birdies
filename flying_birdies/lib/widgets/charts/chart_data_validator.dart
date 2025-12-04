@@ -109,8 +109,9 @@ class ChartDataValidator {
 
   /// Detect outliers using 3-sigma rule (> 3 standard deviations from mean)
   static List<ChartDataPoint> _detectOutliers(List<ChartDataPoint> points) {
-    if (points.length < 3)
+    if (points.length < 3) {
       return []; // Need at least 3 points for meaningful stats
+    }
 
     final values = points.map((p) => p.y).toList();
     final mean = _calculateMean(values);

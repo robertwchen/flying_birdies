@@ -71,7 +71,7 @@ class InteractiveLineChart extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.show_chart,
-                size: 48, color: Colors.grey.withOpacity(0.3)),
+                size: 48, color: Colors.grey.withValues(alpha: 0.3)),
             const SizedBox(height: 12),
             const Text(
               'No data available',
@@ -97,157 +97,173 @@ class InteractiveLineChart extends StatelessWidget {
       300, // Approximate chart width (will be adjusted by fl_chart)
     );
 
-    return LineChart(
-      LineChartData(
-        // Grid configuration
-        gridData: FlGridData(
-          show: config.showGrid,
-          drawVerticalLine: config.showVerticalGrid,
-          drawHorizontalLine: config.showHorizontalGrid,
-          horizontalInterval:
-              _calculateGridInterval(effectiveMinY, effectiveMaxY),
-          getDrawingHorizontalLine: (value) {
-            return FlLine(
-              color: theme.gridColor,
-              strokeWidth: theme.gridLineWidth,
-            );
-          },
-          getDrawingVerticalLine: (value) {
-            return FlLine(
-              color: theme.gridColor.withOpacity(0.5),
-              strokeWidth: theme.gridLineWidth,
-            );
-          },
-        ),
+    // Get accessibility settings
+    final mediaQuery = MediaQuery.of(context);
+    final disableAnimations = mediaQuery.disableAnimations;
 
-        // Titles/axes configuration
-        titlesData: FlTitlesData(
-          show: config.showAxes,
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+    // Create semantic label
+    final minValue = dataPoints.map((p) => p.y).reduce((a, b) => a < b ? a : b);
+    final maxValue = dataPoints.map((p) => p.y).reduce((a, b) => a > b ? a : b);
+    final semanticLabel =
+        'Line chart with ${dataPoints.length} data points. Values range from ${minValue.toStringAsFixed(1)} to ${maxValue.toStringAsFixed(1)} $yUnit. Tap to see details.';
 
-          // X-axis (bottom)
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 30,
-              interval: labelInterval.toDouble(),
-              getTitlesWidget: (value, meta) {
-                return _buildXAxisLabel(value.toInt(), theme);
+    return Semantics(
+      label: semanticLabel,
+      hint: 'Double tap to interact with chart',
+      child: LineChart(
+        LineChartData(
+          // Grid configuration
+          gridData: FlGridData(
+            show: config.showGrid,
+            drawVerticalLine: config.showVerticalGrid,
+            drawHorizontalLine: config.showHorizontalGrid,
+            horizontalInterval:
+                _calculateGridInterval(effectiveMinY, effectiveMaxY),
+            getDrawingHorizontalLine: (value) {
+              return FlLine(
+                color: theme.gridColor,
+                strokeWidth: theme.gridLineWidth,
+              );
+            },
+            getDrawingVerticalLine: (value) {
+              return FlLine(
+                color: theme.gridColor.withValues(alpha: 0.5),
+                strokeWidth: theme.gridLineWidth,
+              );
+            },
+          ),
+
+          // Titles/axes configuration
+          titlesData: FlTitlesData(
+            show: config.showAxes,
+            rightTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+
+            // X-axis (bottom)
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 30,
+                interval: labelInterval.toDouble(),
+                getTitlesWidget: (value, meta) {
+                  return _buildXAxisLabel(value.toInt(), theme);
+                },
+              ),
+            ),
+
+            // Y-axis (left)
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 50,
+                interval: _calculateGridInterval(effectiveMinY, effectiveMaxY),
+                getTitlesWidget: (value, meta) {
+                  return _buildYAxisLabel(value, theme);
+                },
+              ),
+            ),
+          ),
+
+          // Border configuration
+          borderData: FlBorderData(
+            show: config.showAxes,
+            border: Border(
+              left: BorderSide(
+                  color: theme.axisColor, width: theme.axisLineWidth),
+              bottom: BorderSide(
+                  color: theme.axisColor, width: theme.axisLineWidth),
+            ),
+          ),
+
+          // Min/max values
+          minX: spots.first.x,
+          maxX: spots.last.x,
+          minY: effectiveMinY,
+          maxY: effectiveMaxY,
+
+          // Line data
+          lineBarsData: [
+            LineChartBarData(
+              spots: spots,
+              isCurved: config.smoothCurves,
+              curveSmoothness: 0.35,
+              preventCurveOverShooting: true,
+              gradient: theme.lineGradient,
+              barWidth: config.lineWidth,
+              isStrokeCapRound: true,
+
+              // Data point dots
+              dotData: FlDotData(
+                show: config.showDots,
+                getDotPainter: (spot, percent, barData, index) {
+                  return FlDotCirclePainter(
+                    radius: config.dotRadius,
+                    color: theme.dotFillColor,
+                    strokeWidth: theme.dotStrokeWidth,
+                    strokeColor: theme.dotStrokeColor,
+                  );
+                },
+              ),
+
+              // Area fill below line
+              belowBarData: BarAreaData(
+                show: config.showFill,
+                gradient: theme.fillGradient,
+              ),
+            ),
+          ],
+
+          // Touch interaction
+          lineTouchData: LineTouchData(
+            enabled: config.enableInteraction,
+            touchTooltipData: LineTouchTooltipData(
+              getTooltipColor: (touchedSpot) => theme.tooltipBg,
+              getTooltipItems: (touchedSpots) {
+                return touchedSpots.map((spot) {
+                  final index = spot.x.toInt();
+                  if (index < 0 || index >= dataPoints.length) return null;
+
+                  final point = dataPoints[index];
+                  return LineTooltipItem(
+                    '${point.label}\n${point.y.toStringAsFixed(1)} $yUnit${point.shotCount != null ? '\nShots: ${point.shotCount}' : ''}',
+                    theme.tooltipStyle,
+                  );
+                }).toList();
               },
             ),
-          ),
 
-          // Y-axis (left)
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 50,
-              interval: _calculateGridInterval(effectiveMinY, effectiveMaxY),
-              getTitlesWidget: (value, meta) {
-                return _buildYAxisLabel(value, theme);
-              },
-            ),
-          ),
-        ),
-
-        // Border configuration
-        borderData: FlBorderData(
-          show: config.showAxes,
-          border: Border(
-            left:
-                BorderSide(color: theme.axisColor, width: theme.axisLineWidth),
-            bottom:
-                BorderSide(color: theme.axisColor, width: theme.axisLineWidth),
-          ),
-        ),
-
-        // Min/max values
-        minX: spots.first.x,
-        maxX: spots.last.x,
-        minY: effectiveMinY,
-        maxY: effectiveMaxY,
-
-        // Line data
-        lineBarsData: [
-          LineChartBarData(
-            spots: spots,
-            isCurved: config.smoothCurves,
-            curveSmoothness: 0.35,
-            preventCurveOverShooting: true,
-            gradient: theme.lineGradient,
-            barWidth: config.lineWidth,
-            isStrokeCapRound: true,
-
-            // Data point dots
-            dotData: FlDotData(
-              show: config.showDots,
-              getDotPainter: (spot, percent, barData, index) {
-                return FlDotCirclePainter(
-                  radius: config.dotRadius,
-                  color: theme.dotFillColor,
-                  strokeWidth: theme.dotStrokeWidth,
-                  strokeColor: theme.dotStrokeColor,
-                );
-              },
-            ),
-
-            // Area fill below line
-            belowBarData: BarAreaData(
-              show: config.showFill,
-              gradient: theme.fillGradient,
-            ),
-          ),
-        ],
-
-        // Touch interaction
-        lineTouchData: LineTouchData(
-          enabled: config.enableInteraction,
-          touchTooltipData: LineTouchTooltipData(
-            getTooltipColor: (touchedSpot) => theme.tooltipBg,
-            getTooltipItems: (touchedSpots) {
-              return touchedSpots.map((spot) {
-                final index = spot.x.toInt();
-                if (index < 0 || index >= dataPoints.length) return null;
-
-                final point = dataPoints[index];
-                return LineTooltipItem(
-                  '${point.label}\n${point.y.toStringAsFixed(1)} $yUnit${point.shotCount != null ? '\nShots: ${point.shotCount}' : ''}',
-                  theme.tooltipStyle,
+            // Crosshair indicator
+            getTouchedSpotIndicator: (barData, spotIndexes) {
+              return spotIndexes.map((index) {
+                return TouchedSpotIndicatorData(
+                  FlLine(
+                    color: theme.labelColor.withValues(alpha: 0.5),
+                    strokeWidth: 1,
+                    dashArray: [5, 5],
+                  ),
+                  FlDotData(
+                    show: true,
+                    getDotPainter: (spot, percent, barData, index) {
+                      return FlDotCirclePainter(
+                        radius: config.dotRadius + 2,
+                        color: theme.dotStrokeColor,
+                        strokeWidth: 2,
+                        strokeColor: theme.dotFillColor,
+                      );
+                    },
+                  ),
                 );
               }).toList();
             },
           ),
-
-          // Crosshair indicator
-          getTouchedSpotIndicator: (barData, spotIndexes) {
-            return spotIndexes.map((index) {
-              return TouchedSpotIndicatorData(
-                FlLine(
-                  color: theme.labelColor.withOpacity(0.5),
-                  strokeWidth: 1,
-                  dashArray: [5, 5],
-                ),
-                FlDotData(
-                  show: true,
-                  getDotPainter: (spot, percent, barData, index) {
-                    return FlDotCirclePainter(
-                      radius: config.dotRadius + 2,
-                      color: theme.dotStrokeColor,
-                      strokeWidth: 2,
-                      strokeColor: theme.dotFillColor,
-                    );
-                  },
-                ),
-              );
-            }).toList();
-          },
         ),
+        duration: disableAnimations
+            ? Duration.zero
+            : Duration(milliseconds: config.animationDuration),
+        curve: Curves.easeInOut,
       ),
-      duration: Duration(milliseconds: config.animationDuration),
-      curve: Curves.easeInOut,
     );
   }
 
@@ -267,6 +283,7 @@ class InteractiveLineChart extends StatelessWidget {
         label,
         style: theme.axisLabelStyle,
         textAlign: TextAlign.center,
+        textScaler: TextScaler.noScaling, // Prevent excessive scaling in charts
       ),
     );
   }
@@ -277,6 +294,7 @@ class InteractiveLineChart extends StatelessWidget {
       '${value.toInt()} $yUnit',
       style: theme.axisLabelStyle,
       textAlign: TextAlign.right,
+      textScaler: TextScaler.noScaling, // Prevent excessive scaling in charts
     );
   }
 

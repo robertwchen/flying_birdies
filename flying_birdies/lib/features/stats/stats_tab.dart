@@ -7,6 +7,8 @@ import 'package:provider/provider.dart';
 import '../../core/interfaces/i_swing_repository.dart';
 import '../../core/interfaces/i_session_repository.dart';
 import '../../state/session_state_notifier.dart';
+import '../../widgets/charts/charts.dart';
+import '../../models/bucket_data.dart';
 
 class StatsTab extends StatefulWidget {
   const StatsTab({super.key});
@@ -14,16 +16,13 @@ class StatsTab extends StatefulWidget {
   State<StatsTab> createState() => _StatsTabState();
 }
 
-/// High-level time buckets based on when the user played.
-enum TimeRange { daily, weekly, monthly, yearly, all }
-
 class _StatsTabState extends State<StatsTab> {
   TimeRange _range = TimeRange.weekly;
   String _stroke = 'All Strokes';
   bool _loading = true;
 
-  // Real data
-  Map<String, List<double>> _realData = {};
+  // Real data with bucket metadata
+  Map<String, BucketData> _realData = {};
   int _totalShots = 0;
 
   final _strokes = const <String>[
@@ -109,7 +108,7 @@ class _StatsTabState extends State<StatsTab> {
     }
   }
 
-  Map<String, List<double>> _groupSwingsByBucket(
+  Map<String, BucketData> _groupSwingsByBucket(
     List<dynamic> swings,
     DateTime start,
     DateTime end,
@@ -127,6 +126,7 @@ class _StatsTabState extends State<StatsTab> {
     final forceBuckets = List<List<double>>.generate(bucketCount, (_) => []);
     final accelBuckets = List<List<double>>.generate(bucketCount, (_) => []);
     final sforceBuckets = List<List<double>>.generate(bucketCount, (_) => []);
+    final shotCounts = List<int>.filled(bucketCount, 0);
 
     // Group swings into buckets
     for (final swing in swings) {
@@ -138,8 +138,12 @@ class _StatsTabState extends State<StatsTab> {
         forceBuckets[bucketIndex].add(swing.estForceN);
         accelBuckets[bucketIndex].add(swing.impactAmax);
         sforceBuckets[bucketIndex].add(swing.impactSeverity);
+        shotCounts[bucketIndex]++; // Track shot count per bucket
       }
     }
+
+    // Generate bucket timestamps
+    final timestamps = _generateBucketTimestamps(start, end, bucketCount);
 
     // Calculate averages and normalize to 0-1 range
     final speedSeries = _normalizeSeriesWithFallback(speedBuckets, 80, 240);
@@ -148,11 +152,41 @@ class _StatsTabState extends State<StatsTab> {
     final sforceSeries = _normalizeSeriesWithFallback(sforceBuckets, 10, 80);
 
     return {
-      'speed': speedSeries,
-      'force': forceSeries,
-      'accel': accelSeries,
-      'sforce': sforceSeries,
+      'speed': BucketData(
+        normalizedValues: speedSeries,
+        shotCounts: shotCounts,
+        timestamps: timestamps,
+      ),
+      'force': BucketData(
+        normalizedValues: forceSeries,
+        shotCounts: shotCounts,
+        timestamps: timestamps,
+      ),
+      'accel': BucketData(
+        normalizedValues: accelSeries,
+        shotCounts: shotCounts,
+        timestamps: timestamps,
+      ),
+      'sforce': BucketData(
+        normalizedValues: sforceSeries,
+        shotCounts: shotCounts,
+        timestamps: timestamps,
+      ),
     };
+  }
+
+  List<DateTime> _generateBucketTimestamps(
+    DateTime start,
+    DateTime end,
+    int bucketCount,
+  ) {
+    final duration = end.difference(start);
+    final bucketDuration = duration ~/ bucketCount;
+
+    return List.generate(bucketCount, (i) {
+      // Return timestamp for center of each bucket
+      return start.add(bucketDuration * i + bucketDuration ~/ 2);
+    });
   }
 
   int _getBucketIndex(
@@ -232,10 +266,10 @@ class _StatsTabState extends State<StatsTab> {
     }
 
     // Get series (normalized 0..1)
-    final spd = _realData['speed'] ?? [];
-    final frc = _realData['force'] ?? [];
-    final acc = _realData['accel'] ?? [];
-    final sfo = _realData['sforce'] ?? [];
+    final spd = _realData['speed']?.normalizedValues ?? [];
+    final frc = _realData['force']?.normalizedValues ?? [];
+    final acc = _realData['accel']?.normalizedValues ?? [];
+    final sfo = _realData['sforce']?.normalizedValues ?? [];
 
     final labels = _labelsForRange(_range);
 
@@ -305,6 +339,7 @@ class _StatsTabState extends State<StatsTab> {
             series: spd,
             onOpen: () => _openChart(
               title: 'Swing Speed',
+              metricKey: 'speed',
               unit: 'km/h',
               totalShots: _totalShots,
               series: spd,
@@ -327,6 +362,7 @@ class _StatsTabState extends State<StatsTab> {
             series: frc,
             onOpen: () => _openChart(
               title: 'Impact Force',
+              metricKey: 'force',
               unit: 'N',
               totalShots: _totalShots,
               series: frc,
@@ -349,6 +385,7 @@ class _StatsTabState extends State<StatsTab> {
             series: acc,
             onOpen: () => _openChart(
               title: 'Acceleration',
+              metricKey: 'accel',
               unit: 'm/s²',
               totalShots: _totalShots,
               series: acc,
@@ -371,6 +408,7 @@ class _StatsTabState extends State<StatsTab> {
             series: sfo,
             onOpen: () => _openChart(
               title: 'Swing Force',
+              metricKey: 'sforce',
               unit: 'au',
               totalShots: _totalShots,
               series: sfo,
@@ -459,6 +497,7 @@ class _StatsTabState extends State<StatsTab> {
 
   Future<void> _openChart({
     required String title,
+    required String metricKey,
     required String unit,
     required List<double> series,
     required int totalShots,
@@ -467,19 +506,23 @@ class _StatsTabState extends State<StatsTab> {
     required double maxValue,
     required List<String> labels,
   }) {
+    // Create StatsTabChartData
+    final chartData = StatsTabChartData(
+      bucketData: _realData,
+      labels: labels,
+      range: _range,
+      totalShots: totalShots,
+    );
+
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _EnlargedChartSheet(
         title: title,
-        unit: unit,
-        series: series,
-        totalShots: totalShots,
+        metricKey: metricKey,
+        chartData: chartData,
         color: color,
-        minValue: minValue,
-        maxValue: maxValue,
-        labels: labels,
       ),
     );
   }
@@ -696,59 +739,21 @@ class _SparklinePainter extends CustomPainter {
 class _EnlargedChartSheet extends StatefulWidget {
   const _EnlargedChartSheet({
     required this.title,
-    required this.unit,
-    required this.series,
-    required this.totalShots,
+    required this.metricKey,
+    required this.chartData,
     required this.color,
-    required this.minValue,
-    required this.maxValue,
-    required this.labels,
   });
 
   final String title;
-  final String unit;
-  final List<double> series; // normalized 0..1
-  final int totalShots;
+  final String metricKey;
+  final StatsTabChartData chartData;
   final Color color;
-  final double minValue;
-  final double maxValue;
-  final List<String> labels;
 
   @override
   State<_EnlargedChartSheet> createState() => _EnlargedChartSheetState();
 }
 
 class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
-  Offset? _cursor;
-  int? _idx;
-  double? _value;
-
-  static const double _canvasWidth = 1200;
-  static const double _canvasHeight = 320;
-
-  final TransformationController _tc = TransformationController();
-
-  void _updatePointer(Offset local) {
-    final n = widget.series.length;
-    if (n <= 1) return;
-
-    final scene = _tc.toScene(local);
-    final dx = _canvasWidth / (n - 1);
-    final x = scene.dx.clamp(0.0, _canvasWidth);
-    final i = (x / dx).round().clamp(0, n - 1);
-
-    final snappedX = i * dx;
-    final norm = widget.series[i].clamp(0.0, 1.0);
-    final yOnLine = _canvasHeight * (1 - norm);
-    final val = widget.minValue + norm * (widget.maxValue - widget.minValue);
-
-    setState(() {
-      _cursor = Offset(snappedX, yOnLine);
-      _idx = i;
-      _value = val;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -758,61 +763,10 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
         isDark ? Colors.white.withValues(alpha: .08) : const Color(0xFFE5E7EB);
     final titleColor = isDark ? Colors.white : const Color(0xFF111827);
 
-    int shotsForPoint(int idx) {
-      if (widget.series.isEmpty) return 0;
-      final base = (widget.totalShots / widget.series.length);
-      return (base + (widget.series[idx] - 0.5) * 10).round().clamp(0, 999);
-    }
-
-    Widget tooltip() {
-      if (_cursor == null || _idx == null || _value == null) {
-        return const SizedBox.shrink();
-      }
-      final left = (_cursor!.dx - 80).clamp(8.0, _canvasWidth - 160.0);
-      final top = (_cursor!.dy - 60).clamp(8.0, _canvasHeight - 54.0);
-      final label = (_idx! >= 0 && _idx! < widget.labels.length)
-          ? widget.labels[_idx!]
-          : 'Point ${_idx! + 1}';
-      final shotsHere = shotsForPoint(_idx!);
-
-      return Positioned(
-        left: left,
-        top: top,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: isDark
-                ? const Color(0xFF0F1525).withValues(alpha: .92)
-                : const Color(0xFF111827),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.white.withValues(alpha: .12)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: .35),
-                blurRadius: 12,
-              )
-            ],
-          ),
-          child: DefaultTextStyle(
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label,
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 2),
-                Text(
-                  '${_value!.toStringAsFixed(1)} ${widget.unit}',
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 2),
-                Text('Shots: $shotsHere'),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+    // Get data points from chart data
+    final dataPoints = widget.chartData.getDataPoints(widget.metricKey);
+    final unit = widget.chartData.getUnit(widget.metricKey);
+    final (minY, maxY) = widget.chartData.getValueRange(widget.metricKey);
 
     return Container(
       decoration: BoxDecoration(
@@ -867,42 +821,65 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
                 children: [
                   _infoChip(
                     isDark,
-                    'Range ${widget.minValue.toInt()}–${widget.maxValue.toInt()} ${widget.unit}',
+                    'Range ${minY.toInt()}–${maxY.toInt()} $unit',
                   ),
-                  _infoChip(isDark, 'Shots ${widget.totalShots}'),
-                  _infoChip(isDark, '${widget.series.length} points'),
+                  _infoChip(isDark, 'Shots ${widget.chartData.totalShots}'),
+                  _infoChip(isDark, '${dataPoints.length} points'),
                 ],
               ),
             ),
             SizedBox(
-              height: _canvasHeight,
-              child: GestureDetector(
-                onTapDown: (d) => _updatePointer(d.localPosition),
-                onPanStart: (d) => _updatePointer(d.localPosition),
-                onPanUpdate: (d) => _updatePointer(d.localPosition),
-                onPanEnd: (_) => setState(() => _cursor = _idx = _value = null),
-                onTapUp: (_) => setState(() => _cursor = _idx = _value = null),
-                child: InteractiveViewer(
-                  transformationController: _tc,
-                  minScale: 1,
-                  maxScale: 6,
-                  child: Stack(
-                    children: [
-                      SizedBox(
-                        width: _canvasWidth,
-                        height: _canvasHeight,
-                        child: CustomPaint(
-                          painter: _BigSparklinePainter(
-                            series: widget.series,
-                            color: widget.color,
-                            cursor: _cursor,
-                            isDark: isDark,
-                          ),
+              height: 320,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: InteractiveLineChart(
+                  dataPoints: dataPoints,
+                  yUnit: unit,
+                  minY: minY,
+                  maxY: maxY,
+                  configuration: ChartConfiguration.interactive(),
+                  tooltipBuilder: (point) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? const Color(0xFF0F1525).withValues(alpha: .92)
+                            : const Color(0xFF111827),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: .12)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: .35),
+                            blurRadius: 12,
+                          )
+                        ],
+                      ),
+                      child: DefaultTextStyle(
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 13),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(point.label,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${point.y.toStringAsFixed(1)} $unit',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 2),
+                            Text('Shots: ${point.shotCount}'),
+                          ],
                         ),
                       ),
-                      tooltip(),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -932,88 +909,6 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
       ),
     );
   }
-}
-
-class _BigSparklinePainter extends CustomPainter {
-  _BigSparklinePainter({
-    required this.series,
-    required this.color,
-    required this.cursor,
-    required this.isDark,
-  });
-
-  final List<double> series;
-  final Color color;
-  final Offset? cursor;
-  final bool isDark;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (series.isEmpty) return;
-
-    final n = series.length;
-    final dx = size.width / (n - 1);
-    double yAt(int i) => size.height * (1 - series[i]);
-
-    // horizontal grid lines
-    final grid = Paint()
-      ..color = (isDark
-              ? Colors.white.withValues(alpha: .08)
-              : const Color(0xFFE5E7EB))
-          .withValues(alpha: .8)
-      ..strokeWidth = 1;
-    for (int i = 1; i < 5; i++) {
-      final y = size.height * i / 5;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
-    }
-
-    // main path
-    final path = Path()..moveTo(0, yAt(0));
-    for (int i = 1; i < n; i++) {
-      path.lineTo(dx * i, yAt(i));
-    }
-
-    // area fill
-    final fill = Paint()
-      ..style = PaintingStyle.fill
-      ..shader = LinearGradient(
-        colors: [
-          const Color(0xFFFF6FD8).withValues(alpha: .13),
-          const Color(0xFF7E4AED).withValues(alpha: .13),
-        ],
-      ).createShader(Offset.zero & size);
-    final fillPath = Path.from(path)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-    canvas.drawPath(fillPath, fill);
-
-    // line
-    final line = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..color = color.withValues(alpha: .9);
-    canvas.drawPath(path, line);
-
-    // crosshair + dot
-    if (cursor != null) {
-      final x = cursor!.dx.clamp(0.0, size.width);
-      final idx = (x / dx).round().clamp(0, n - 1);
-      final y = yAt(idx);
-      final cross = Paint()
-        ..color = (isDark ? Colors.white54 : const Color(0xFF9CA3AF))
-        ..strokeWidth = 1;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), cross);
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), cross);
-
-      final dot = Paint()..color = color;
-      canvas.drawCircle(Offset(dx * idx, y), 5, dot);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _BigSparklinePainter oldDelegate) =>
-      oldDelegate.series != series || oldDelegate.cursor != cursor;
 }
 
 /* ───────── Stroke dropdown ───────── */

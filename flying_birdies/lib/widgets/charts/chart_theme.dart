@@ -18,23 +18,25 @@ class ChartTheme {
       isDark ? const Color(0xFFFF6FD8) : const Color(0xFF7E4AED);
 
   /// Fill color for area below line (15% opacity)
-  Color get fillColor => lineColor.withOpacity(0.15);
+  Color get fillColor => lineColor.withValues(alpha: 0.15);
 
   /// Grid line color - subtle, doesn't overpower data
-  Color get gridColor =>
-      isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.05);
+  Color get gridColor => isDark
+      ? Colors.white.withValues(alpha: 0.08)
+      : Colors.black.withValues(alpha: 0.05);
 
   /// Axis line color
-  Color get axisColor =>
-      isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.1);
+  Color get axisColor => isDark
+      ? Colors.white.withValues(alpha: 0.1)
+      : Colors.black.withValues(alpha: 0.1);
 
   /// Label text color
   Color get labelColor => isDark ? Colors.white70 : Colors.black54;
 
   /// Tooltip background color
   Color get tooltipBg => isDark
-      ? const Color(0xFF0F1525).withOpacity(0.95)
-      : const Color(0xFF111827).withOpacity(0.95);
+      ? const Color(0xFF0F1525).withValues(alpha: 0.95)
+      : const Color(0xFF111827).withValues(alpha: 0.95);
 
   /// Tooltip text color
   Color get tooltipText => Colors.white;
@@ -82,8 +84,8 @@ class ChartTheme {
   /// Gradient for area fill below line (fades to transparent)
   LinearGradient get fillGradient => LinearGradient(
         colors: [
-          const Color(0xFFFF6FD8).withOpacity(0.15),
-          const Color(0xFF7E4AED).withOpacity(0.05),
+          const Color(0xFFFF6FD8).withValues(alpha: 0.15),
+          const Color(0xFF7E4AED).withValues(alpha: 0.05),
         ],
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,

@@ -2,7 +2,7 @@
 ///
 /// This library provides professional, interactive charts using fl_chart
 /// with a minimalist design matching the app's aesthetic.
-library charts;
+library;
 
 // Core models
 export 'chart_data_point.dart';
@@ -19,3 +19,4 @@ export 'stats_tab_chart_data.dart';
 
 // Utilities
 export 'chart_data_validator.dart';
+export 'chart_fallback_handler.dart';

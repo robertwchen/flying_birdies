@@ -1,14 +1,12 @@
 // lib/features/stats/stats_tab.dart
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/interfaces/i_swing_repository.dart';
 import '../../core/interfaces/i_session_repository.dart';
 import '../../state/session_state_notifier.dart';
 import '../../widgets/charts/charts.dart';
-import '../../models/bucket_data.dart';
 
 class StatsTab extends StatefulWidget {
   const StatsTab({super.key});
@@ -21,8 +19,8 @@ class _StatsTabState extends State<StatsTab> {
   String _stroke = 'All Strokes';
   bool _loading = true;
 
-  // Real data with bucket metadata
-  Map<String, BucketData> _realData = {};
+  // All swings in the selected time range
+  List<dynamic> _allSwings = [];
   int _totalShots = 0;
 
   final _strokes = const <String>[
@@ -94,11 +92,11 @@ class _StatsTabState extends State<StatsTab> {
         }
       }
 
-      // Group swings by time bucket and calculate averages
-      final buckets = _groupSwingsByBucket(allSwings, start, now);
+      // Sort swings by timestamp
+      allSwings.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
       setState(() {
-        _realData = buckets;
+        _allSwings = allSwings;
         _totalShots = allSwings.length;
         _loading = false;
       });
@@ -108,151 +106,57 @@ class _StatsTabState extends State<StatsTab> {
     }
   }
 
-  Map<String, BucketData> _groupSwingsByBucket(
-    List<dynamic> swings,
-    DateTime start,
-    DateTime end,
-  ) {
-    final bucketCount = switch (_range) {
-      TimeRange.daily => 24, // hours
-      TimeRange.weekly => 7, // days
-      TimeRange.monthly => 30,
-      TimeRange.yearly => 12,
-      TimeRange.all => 36,
-    };
+  // Calculate stats for sparklines (normalized 0-1)
+  List<double> _getSparklineData(String metric) {
+    if (_allSwings.isEmpty) return [];
 
-    // Initialize buckets
-    final speedBuckets = List<List<double>>.generate(bucketCount, (_) => []);
-    final forceBuckets = List<List<double>>.generate(bucketCount, (_) => []);
-    final accelBuckets = List<List<double>>.generate(bucketCount, (_) => []);
-    final sforceBuckets = List<List<double>>.generate(bucketCount, (_) => []);
-    final shotCounts = List<int>.filled(bucketCount, 0);
+    return _allSwings.map<double>((swing) {
+      final value = switch (metric) {
+        'speed' => swing.maxVtip * 3.6, // m/s to km/h
+        'force' => swing.estForceN,
+        'accel' => swing.impactAmax,
+        'sforce' => swing.impactSeverity,
+        _ => 0.0,
+      };
 
-    // Group swings into buckets
-    for (final swing in swings) {
-      final timestamp = swing.timestamp;
-      final bucketIndex = _getBucketIndex(timestamp, start, end, bucketCount);
+      // Normalize to 0-1 range
+      final (min, max) = switch (metric) {
+        'speed' => (80.0, 240.0),
+        'force' => (20.0, 120.0),
+        'accel' => (5.0, 45.0),
+        'sforce' => (10.0, 80.0),
+        _ => (0.0, 100.0),
+      };
 
-      if (bucketIndex >= 0 && bucketIndex < bucketCount) {
-        speedBuckets[bucketIndex].add(swing.maxVtip * 3.6); // m/s to km/h
-        forceBuckets[bucketIndex].add(swing.estForceN);
-        accelBuckets[bucketIndex].add(swing.impactAmax);
-        sforceBuckets[bucketIndex].add(swing.impactSeverity);
-        shotCounts[bucketIndex]++; // Track shot count per bucket
-      }
-    }
-
-    // Generate bucket timestamps
-    final timestamps = _generateBucketTimestamps(start, end, bucketCount);
-
-    // Calculate averages and normalize to 0-1 range
-    final speedSeries = _normalizeSeriesWithFallback(speedBuckets, 80, 240);
-    final forceSeries = _normalizeSeriesWithFallback(forceBuckets, 20, 120);
-    final accelSeries = _normalizeSeriesWithFallback(accelBuckets, 5, 45);
-    final sforceSeries = _normalizeSeriesWithFallback(sforceBuckets, 10, 80);
-
-    return {
-      'speed': BucketData(
-        normalizedValues: speedSeries,
-        shotCounts: shotCounts,
-        timestamps: timestamps,
-      ),
-      'force': BucketData(
-        normalizedValues: forceSeries,
-        shotCounts: shotCounts,
-        timestamps: timestamps,
-      ),
-      'accel': BucketData(
-        normalizedValues: accelSeries,
-        shotCounts: shotCounts,
-        timestamps: timestamps,
-      ),
-      'sforce': BucketData(
-        normalizedValues: sforceSeries,
-        shotCounts: shotCounts,
-        timestamps: timestamps,
-      ),
-    };
-  }
-
-  List<DateTime> _generateBucketTimestamps(
-    DateTime start,
-    DateTime end,
-    int bucketCount,
-  ) {
-    final duration = end.difference(start);
-    final bucketDuration = duration ~/ bucketCount;
-
-    return List.generate(bucketCount, (i) {
-      // Return timestamp for center of each bucket
-      return start.add(bucketDuration * i + bucketDuration ~/ 2);
-    });
-  }
-
-  int _getBucketIndex(
-      DateTime timestamp, DateTime start, DateTime end, int bucketCount) {
-    final totalDuration = end.difference(start);
-    final elapsed = timestamp.difference(start);
-
-    if (elapsed.isNegative || elapsed > totalDuration) return -1;
-
-    final ratio = elapsed.inMilliseconds / totalDuration.inMilliseconds;
-    return (ratio * bucketCount).floor().clamp(0, bucketCount - 1);
-  }
-
-  List<double> _normalizeSeriesWithFallback(
-    List<List<double>> buckets,
-    double min,
-    double max,
-  ) {
-    final range = max - min;
-    return buckets.map((bucket) {
-      if (bucket.isEmpty) {
-        // Use synthetic data for empty buckets
-        return 0.5 + (math.Random().nextDouble() - 0.5) * 0.2;
-      }
-      final avg = bucket.reduce((a, b) => a + b) / bucket.length;
-      return ((avg - min) / range).clamp(0.0, 1.0);
+      return ((value - min) / (max - min)).clamp(0.0, 1.0);
     }).toList();
   }
 
-  List<String> _labelsForRange(TimeRange r) {
-    final now = DateTime.now();
-    switch (r) {
-      case TimeRange.daily:
-        return List.generate(24, (h) => '${h.toString().padLeft(2, '0')}:00');
-      case TimeRange.weekly:
-        final start = now.subtract(const Duration(days: 6));
-        final f = DateFormat('E d');
-        return List.generate(7, (i) => f.format(start.add(Duration(days: i))));
-      case TimeRange.monthly:
-        final start = now.subtract(const Duration(days: 29));
-        final f = DateFormat('MMM d');
-        return List.generate(30, (i) => f.format(start.add(Duration(days: i))));
-      case TimeRange.yearly:
-        final f = DateFormat('MMM');
-        return List.generate(
-          12,
-          (i) => f.format(DateTime(now.year, now.month - 11 + i)),
-        );
-      case TimeRange.all:
-        final f = DateFormat('MMM yy');
-        return List.generate(
-          36,
-          (i) => f.format(DateTime(now.year, now.month - 35 + i)),
-        );
+  Map<String, num> _stats(String metric) {
+    if (_allSwings.isEmpty) {
+      final (min, _) = switch (metric) {
+        'speed' => (80.0, 240.0),
+        'force' => (20.0, 120.0),
+        'accel' => (5.0, 45.0),
+        'sforce' => (10.0, 80.0),
+        _ => (0.0, 100.0),
+      };
+      return {'max': min, 'avg': min};
     }
-  }
 
-  Map<String, num> _stats(List<double> s,
-      {required num base, required num span}) {
-    if (s.isEmpty) return {'max': base, 'avg': base};
-    final mx = s.reduce(math.max);
-    final avg = s.reduce((a, b) => a + b) / s.length;
-    return {
-      'max': base + mx * span,
-      'avg': base + avg * span,
-    };
+    final values = _allSwings.map<double>((swing) {
+      return switch (metric) {
+        'speed' => swing.maxVtip * 3.6,
+        'force' => swing.estForceN,
+        'accel' => swing.impactAmax,
+        'sforce' => swing.impactSeverity,
+        _ => 0.0,
+      };
+    }).toList();
+
+    final mx = values.reduce((a, b) => math.max<double>(a, b));
+    final avg = values.reduce((a, b) => a + b) / values.length;
+    return {'max': mx, 'avg': avg};
   }
 
   @override
@@ -265,24 +169,17 @@ class _StatsTabState extends State<StatsTab> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    // Get series (normalized 0..1)
-    final spd = _realData['speed']?.normalizedValues ?? [];
-    final frc = _realData['force']?.normalizedValues ?? [];
-    final acc = _realData['accel']?.normalizedValues ?? [];
-    final sfo = _realData['sforce']?.normalizedValues ?? [];
+    // Get sparkline series (normalized 0..1)
+    final spd = _getSparklineData('speed');
+    final frc = _getSparklineData('force');
+    final acc = _getSparklineData('accel');
+    final sfo = _getSparklineData('sforce');
 
-    final labels = _labelsForRange(_range);
-
-    // value ranges
-    const speedMin = 80.0, speedMax = 240.0;
-    const forceMin = 20.0, forceMax = 120.0;
-    const accelMin = 5.0, accelMax = 45.0;
-    const sforceMin = 10.0, sforceMax = 80.0;
-
-    final spdStats = _stats(spd, base: speedMin, span: speedMax - speedMin);
-    final frcStats = _stats(frc, base: forceMin, span: forceMax - forceMin);
-    final accStats = _stats(acc, base: accelMin, span: accelMax - accelMin);
-    final sfoStats = _stats(sfo, base: sforceMin, span: sforceMax - sforceMin);
+    // Calculate stats
+    final spdStats = _stats('speed');
+    final frcStats = _stats('force');
+    final accStats = _stats('accel');
+    final sfoStats = _stats('sforce');
 
     return RefreshIndicator(
       onRefresh: _loadRealData,
@@ -344,9 +241,6 @@ class _StatsTabState extends State<StatsTab> {
               totalShots: _totalShots,
               series: spd,
               color: const Color(0xFFFF7AE0),
-              minValue: speedMin,
-              maxValue: speedMax,
-              labels: labels,
             ),
           ),
           const SizedBox(height: 12),
@@ -367,9 +261,6 @@ class _StatsTabState extends State<StatsTab> {
               totalShots: _totalShots,
               series: frc,
               color: const Color(0xFFFFB86B),
-              minValue: forceMin,
-              maxValue: forceMax,
-              labels: labels,
             ),
           ),
           const SizedBox(height: 12),
@@ -390,9 +281,6 @@ class _StatsTabState extends State<StatsTab> {
               totalShots: _totalShots,
               series: acc,
               color: const Color(0xFF9AE6B4),
-              minValue: accelMin,
-              maxValue: accelMax,
-              labels: labels,
             ),
           ),
           const SizedBox(height: 12),
@@ -413,9 +301,6 @@ class _StatsTabState extends State<StatsTab> {
               totalShots: _totalShots,
               series: sfo,
               color: const Color(0xFFA5B4FC),
-              minValue: sforceMin,
-              maxValue: sforceMax,
-              labels: labels,
             ),
           ),
 
@@ -502,14 +387,11 @@ class _StatsTabState extends State<StatsTab> {
     required List<double> series,
     required int totalShots,
     required Color color,
-    required double minValue,
-    required double maxValue,
-    required List<String> labels,
   }) {
-    // Create StatsTabChartData
+    // Create StatsTabChartData with individual swings
     final chartData = StatsTabChartData(
-      bucketData: _realData,
-      labels: labels,
+      swings: _allSwings,
+      metricKey: metricKey,
       range: _range,
       totalShots: totalShots,
     );
@@ -765,8 +647,8 @@ class _EnlargedChartSheetState extends State<_EnlargedChartSheet> {
 
     // Get data points from chart data
     final dataPoints = widget.chartData.getDataPoints(widget.metricKey);
-    final unit = widget.chartData.getUnit(widget.metricKey);
-    final (minY, maxY) = widget.chartData.getValueRange(widget.metricKey);
+    final unit = widget.chartData.unit;
+    final (minY, maxY) = widget.chartData.valueRange;
 
     return Container(
       decoration: BoxDecoration(

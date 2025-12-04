@@ -1,76 +1,73 @@
+import 'package:intl/intl.dart';
 import 'chart_data_point.dart';
-import '../../models/bucket_data.dart';
 
 /// Time range options for Stats tab
 enum TimeRange { daily, weekly, monthly, yearly, all }
 
 /// Chart data processor for Stats tab
 ///
-/// Converts bucket data (aggregated swing metrics over time) into chart data points.
-/// Handles time-based labels and shot count calculations.
+/// Converts individual swing data into chart data points for visualization.
+/// Each point represents one swing (not time-bucketed aggregates).
 class StatsTabChartData {
-  /// Bucket data: map of metric keys to BucketData objects
-  /// Keys: 'speed', 'force', 'accel', 'sforce'
-  final Map<String, BucketData> bucketData;
+  /// All swings in the selected time range
+  final List<dynamic> swings;
 
-  /// Labels for each bucket (e.g., "Mon 1", "10:00", "Jan")
-  final List<String> labels;
+  /// Metric key to display ('speed', 'force', 'accel', 'sforce')
+  final String metricKey;
 
   /// Selected time range
   final TimeRange range;
 
-  /// Total shots across all buckets
+  /// Total shots
   final int totalShots;
 
   const StatsTabChartData({
-    required this.bucketData,
-    required this.labels,
+    required this.swings,
+    required this.metricKey,
     required this.range,
     required this.totalShots,
   });
 
-  /// Get data points for a specific metric
+  /// Get data points for the selected metric
   ///
-  /// [metricKey] should be one of: 'speed', 'force', 'accel', 'sforce'
+  /// Each point represents one individual swing
   List<ChartDataPoint> getDataPoints(String metricKey) {
-    final data = bucketData[metricKey];
-    if (data == null) return [];
-
-    final series = data.normalizedValues;
-
-    return series.asMap().entries.map((e) {
+    return swings.asMap().entries.map((e) {
       final index = e.key;
-      final normalizedValue = e.value;
+      final swing = e.value;
 
-      // De-normalize value back to actual range for display
-      final actualValue = _denormalizeValue(normalizedValue, metricKey);
+      final value = _extractMetricValue(swing, metricKey);
+      final label = _formatLabel(swing.timestamp, index);
 
       return ChartDataPoint(
         x: index.toDouble(),
-        y: actualValue,
-        label: index < labels.length ? labels[index] : 'Bucket $index',
-        shotCount: data.shotCounts[index], // Use actual shot count from bucket
-        timestamp: data.timestamps[index], // Include timestamp
+        y: value,
+        label: label,
+        shotCount: 1, // Each point is one swing
+        timestamp: swing.timestamp,
       );
     }).toList();
   }
 
-  /// De-normalize value from 0-1 range back to actual metric range
-  double _denormalizeValue(double normalized, String metricKey) {
-    // These ranges match the normalization in stats_tab.dart
-    final (min, max) = switch (metricKey) {
-      'speed' => (80.0, 240.0), // km/h
-      'force' => (20.0, 120.0), // N
-      'accel' => (5.0, 45.0), // m/s²
-      'sforce' => (10.0, 80.0), // au (swing force)
-      _ => (0.0, 100.0), // fallback
+  /// Extract metric value from swing
+  double _extractMetricValue(dynamic swing, String metricKey) {
+    return switch (metricKey) {
+      'speed' => swing.maxVtip * 3.6, // m/s to km/h
+      'force' => swing.estForceN,
+      'accel' => swing.impactAmax,
+      'sforce' => swing.impactSeverity,
+      _ => 0.0,
     };
-
-    return min + (normalized * (max - min));
   }
 
-  /// Get unit string for a metric
-  String getUnit(String metricKey) {
+  /// Format label for a swing based on timestamp
+  String _formatLabel(DateTime timestamp, int index) {
+    final formatter = DateFormat('MMM d, HH:mm');
+    return formatter.format(timestamp);
+  }
+
+  /// Get unit string for the metric
+  String get unit {
     return switch (metricKey) {
       'speed' => 'km/h',
       'force' => 'N',
@@ -80,8 +77,8 @@ class StatsTabChartData {
     };
   }
 
-  /// Get display name for a metric
-  String getMetricName(String metricKey) {
+  /// Get display name for the metric
+  String get metricName {
     return switch (metricKey) {
       'speed' => 'Swing Speed',
       'force' => 'Impact Force',
@@ -92,10 +89,7 @@ class StatsTabChartData {
   }
 
   /// Check if we have data
-  bool get hasData => bucketData.isNotEmpty && totalShots > 0;
-
-  /// Get number of buckets
-  int get bucketCount => labels.length;
+  bool get hasData => swings.isNotEmpty;
 
   /// Get time range description
   String get rangeDescription {
@@ -108,8 +102,8 @@ class StatsTabChartData {
     };
   }
 
-  /// Calculate value range for a metric (with padding)
-  (double min, double max) getValueRange(String metricKey) {
+  /// Calculate value range for the metric (with padding)
+  (double min, double max) get valueRange {
     final points = getDataPoints(metricKey);
     if (points.isEmpty) return (0, 100);
 
@@ -130,8 +124,8 @@ class StatsTabChartData {
     return (minValue * 0.9, maxValue * 1.1);
   }
 
-  /// Get average value for a metric
-  double getAverage(String metricKey) {
+  /// Get average value for the metric
+  double get average {
     final points = getDataPoints(metricKey);
     if (points.isEmpty) return 0;
 
@@ -139,8 +133,8 @@ class StatsTabChartData {
     return sum / points.length;
   }
 
-  /// Get maximum value for a metric
-  double getMaximum(String metricKey) {
+  /// Get maximum value for the metric
+  double get maximum {
     final points = getDataPoints(metricKey);
     if (points.isEmpty) return 0;
 

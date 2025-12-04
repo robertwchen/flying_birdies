@@ -760,7 +760,7 @@ class _MetricGrid extends StatelessWidget {
           title: 'Swing force',
           avg: swingForceAvg,
           max: swingForceMax,
-          unit: 'au',
+          unit: 'N',
           cardBg: cardBg,
           border: border,
           primaryText: primaryText,
@@ -1133,7 +1133,7 @@ class _GraphSection extends StatelessWidget {
       case GraphMetric.swingSpeed:
         return 'km/h';
       case GraphMetric.swingForce:
-        return 'au';
+        return 'N';
       case GraphMetric.acceleration:
         return 'm/s²';
       case GraphMetric.impactForce:

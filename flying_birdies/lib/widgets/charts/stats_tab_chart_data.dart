@@ -72,7 +72,7 @@ class StatsTabChartData {
       'speed' => 'km/h',
       'force' => 'N',
       'accel' => 'm/s²',
-      'sforce' => 'au',
+      'sforce' => 'N',
       _ => '',
     };
   }

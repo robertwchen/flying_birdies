@@ -152,10 +152,10 @@ class InteractiveLineChart extends StatelessWidget {
                   ),
                 ),
               ),
-              axisNameSize: 20,
+              axisNameSize: 24,
               sideTitles: SideTitles(
                 showTitles: true,
-                reservedSize: 30,
+                reservedSize: 32,
                 interval: labelInterval.toDouble(),
                 getTitlesWidget: (value, meta) {
                   return _buildXAxisLabel(value.toInt(), theme);

@@ -63,7 +63,7 @@ class FeedbackTabChartData {
       case GraphMetric.swingSpeed:
         return 'km/h';
       case GraphMetric.swingForce:
-        return 'au';
+        return 'N';
       case GraphMetric.acceleration:
         return 'm/s²';
       case GraphMetric.impactForce:

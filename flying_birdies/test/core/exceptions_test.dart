@@ -110,7 +110,7 @@ void main() {
           'test_operation',
           stackTrace: StackTrace.current,
         );
-      } catch (e, stackTrace) {
+      } catch (e) {
         expect(e, isA<DatabaseException>());
         final dbException = e as DatabaseException;
         expect(dbException.stackTrace, isNotNull);

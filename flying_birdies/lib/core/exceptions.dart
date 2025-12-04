@@ -30,17 +30,12 @@ class DatabaseException extends AppException {
   final String operation;
 
   DatabaseException(
-    String message,
+    super.message,
     this.operation, {
-    String? context,
-    dynamic originalError,
-    StackTrace? stackTrace,
-  }) : super(
-          message,
-          context: context,
-          originalError: originalError,
-          stackTrace: stackTrace,
-        );
+    super.context,
+    super.originalError,
+    super.stackTrace,
+  });
 
   @override
   String toString() {
@@ -55,17 +50,12 @@ class BleException extends AppException {
   final String operation;
 
   BleException(
-    String message,
+    super.message,
     this.operation, {
-    String? context,
-    dynamic originalError,
-    StackTrace? stackTrace,
-  }) : super(
-          message,
-          context: context,
-          originalError: originalError,
-          stackTrace: stackTrace,
-        );
+    super.context,
+    super.originalError,
+    super.stackTrace,
+  });
 
   @override
   String toString() {
@@ -80,17 +70,12 @@ class SyncException extends AppException {
   final bool isRetryable;
 
   SyncException(
-    String message, {
+    super.message, {
     this.isRetryable = true,
-    String? context,
-    dynamic originalError,
-    StackTrace? stackTrace,
-  }) : super(
-          message,
-          context: context,
-          originalError: originalError,
-          stackTrace: stackTrace,
-        );
+    super.context,
+    super.originalError,
+    super.stackTrace,
+  });
 
   @override
   String toString() {
@@ -103,14 +88,9 @@ class SyncException extends AppException {
 /// Exception thrown when analytics operations fail
 class AnalyticsException extends AppException {
   AnalyticsException(
-    String message, {
-    String? context,
-    dynamic originalError,
-    StackTrace? stackTrace,
-  }) : super(
-          message,
-          context: context,
-          originalError: originalError,
-          stackTrace: stackTrace,
-        );
+    super.message, {
+    super.context,
+    super.originalError,
+    super.stackTrace,
+  });
 }

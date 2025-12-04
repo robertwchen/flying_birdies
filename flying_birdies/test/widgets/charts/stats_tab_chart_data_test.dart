@@ -47,7 +47,7 @@ void main() {
       expect(chartData.getUnit('speed'), 'km/h');
       expect(chartData.getUnit('force'), 'N');
       expect(chartData.getUnit('accel'), 'm/s²');
-      expect(chartData.getUnit('sforce'), 'au');
+      expect(chartData.getUnit('sforce'), 'N');
     });
 
     test('getMetricName returns correct names', () {

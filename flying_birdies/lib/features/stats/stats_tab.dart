@@ -138,14 +138,7 @@ class _StatsTabState extends State<StatsTab> {
 
   Map<String, num> _stats(String metric) {
     if (_allSwings.isEmpty) {
-      final (min, _) = switch (metric) {
-        'speed' => (80.0, 240.0),
-        'force' => (20.0, 120.0),
-        'accel' => (5.0, 45.0),
-        'sforce' => (10.0, 80.0),
-        _ => (0.0, 100.0),
-      };
-      return {'max': min, 'avg': min};
+      return {'max': 0, 'avg': 0};
     }
 
     final values = _allSwings.map<double>((swing) {
@@ -292,7 +285,7 @@ class _StatsTabState extends State<StatsTab> {
           _MetricCard(
             heroTag: 'metric-swingforce',
             title: 'Swing Force',
-            unit: 'au',
+            unit: 'm/s²',
             icon: Icons.refresh_rounded,
             maxValue: sfoStats['max']!.round(),
             avgValue: sfoStats['avg']!.round(),
@@ -301,7 +294,7 @@ class _StatsTabState extends State<StatsTab> {
             onOpen: () => _openChart(
               title: 'Swing Force',
               metricKey: 'sforce',
-              unit: 'au',
+              unit: 'm/s²',
               totalShots: _totalShots,
               series: sfo,
               color: const Color(0xFFA5B4FC),

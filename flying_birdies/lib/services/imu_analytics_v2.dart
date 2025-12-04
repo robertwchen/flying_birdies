@@ -32,8 +32,9 @@ class SwingAnalyzerV2 {
         maxOmega: v12Swing.maxAngularVelocity,
         maxVtip: v12Swing.maxTipSpeed,
         impactAmax: v12Swing.impactAcceleration,
-        impactSeverity: v12Swing.micPerGyroRatio,
-        estForceN: v12Swing.swingForce,
+        impactSeverity: v12Swing
+            .swingForce, // Swing force in N (racket+sensor mass * accel)
+        estForceN: v12Swing.estimatedForce, // Impact force at tip in N
         swingDurationMs: v12Swing.swingDuration,
         qualityPassed: v12Swing.isValidSwing,
         shuttleSpeedOut: v12Swing.maxTipSpeed * v12.ImuConfig.shuttleVsTipRatio,

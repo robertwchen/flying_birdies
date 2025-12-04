@@ -327,7 +327,7 @@ class _TrainTabState extends State<TrainTab> {
             _MetricSmallCard(
               title: 'Swing force',
               value: swingForce,
-              unit: 'au',
+              unit: 'N',
             ),
           ],
         ),

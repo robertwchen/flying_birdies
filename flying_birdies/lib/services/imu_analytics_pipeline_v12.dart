@@ -7,6 +7,8 @@ class ImuConfig {
   static const double shuttleMass = 0.0053; // SHUTTLE_MASS_KG (kg)
   static const double contactDurationMs = 2.0; // CONTACT_MS (ms)
   static const double effectiveTipMass = 0.15; // EFFECTIVE_TIP_MASS_KG (kg)
+  static const double racketSensorMass =
+      0.10; // RACKET_SENSOR_MASS_KG (kg) - badminton racket ~90g + sensor ~10g
   static const double shuttleVsTipRatio = 1.5; // SHUTTLE_VS_TIP_RATIO
   static const double incomingSpeedStdMs = 15.0; // INCOMING_SPEED_STD_MS (m/s)
   static const double gToMs2 = 9.81; // G_TO_MS2 (m/s² per g)
@@ -65,8 +67,9 @@ class SwingMetrics {
   final double maxAngularVelocity; // rad/s
   final double maxTipSpeed; // m/s
   final double impactAcceleration; // m/s²
-  final double estimatedForce; // N (impact force at racket)
-  final double swingForce; // N (shuttle-side force)
+  final double estimatedForce; // N (impact force at racket tip)
+  final double swingForce; // N (swing force from racket+sensor mass)
+  final double shuttleForceActual; // N (shuttle-side force)
   final double shuttleForceStd; // N (standardized rally force)
   final int swingDuration;
   final double micPerGyroRatio; // FFT power ratio
@@ -79,6 +82,7 @@ class SwingMetrics {
     required this.impactAcceleration,
     required this.estimatedForce,
     required this.swingForce,
+    required this.shuttleForceActual,
     required this.shuttleForceStd,
     required this.swingDuration,
     required this.micPerGyroRatio,
@@ -376,8 +380,11 @@ class SwingAnalyzer {
     final aMaxG =
         winAcc.map((x) => (x - winAccMean).abs()).reduce(max); // g, for logging
 
-    // 3) Impact force at racket (matching Python)
+    // 3) Impact force at racket tip (matching Python)
     final impactForce = ImuConfig.effectiveTipMass * accelMag; // N
+
+    // 3b) Swing force from racket+sensor mass
+    final swingForceRacket = ImuConfig.racketSensorMass * accelMag; // N
 
     // 4a) Shuttle-side force from outgoing speed (matching Python)
     final shuttleSpeedOut = ImuConfig.shuttleVsTipRatio * swingSpeed; // m/s
@@ -430,7 +437,8 @@ class SwingAnalyzer {
       maxTipSpeed: swingSpeed,
       impactAcceleration: accelMag,
       estimatedForce: impactForce,
-      swingForce: shuttleForceActual,
+      swingForce: swingForceRacket,
+      shuttleForceActual: shuttleForceActual,
       shuttleForceStd: shuttleForceStd,
       swingDuration:
           ((window.endIndex - window.startIndex) / fsEst * 1000).round(),

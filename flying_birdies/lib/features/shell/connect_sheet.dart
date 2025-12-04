@@ -123,6 +123,9 @@ class _ConnectSheetState extends State<_ConnectSheet> {
       return _startScan();
     }
 
+    // Stop scanning immediately when connecting
+    await _scanSubscription?.cancel();
+
     if (mounted) {
       setState(() => _scanning = true);
     }
@@ -408,10 +411,12 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                                       child: _DeviceRow(
                                         device: d,
                                         selected: _selected?.id == d.id,
-                                        onTap: () {
+                                        onTap: () async {
                                           if (mounted) {
                                             setState(() => _selected = d);
                                           }
+                                          // Connect immediately when device is tapped
+                                          await _connect();
                                         },
                                       ),
                                     ),

@@ -1,6 +1,4 @@
 // lib/features/feedback/feedback_tab.dart
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1143,162 +1141,10 @@ class _GraphSection extends StatelessWidget {
     }
   }
 
-  // Extract real metric data from swing entities
-  List<double> _seriesFor(GraphMetric m) {
-    // If no real swing data, fall back to synthetic data
-    if (swingData == null || swingData!.isEmpty) {
-      debugPrint('⚠️ FEEDBACK: No swing data, using synthetic data');
-      return _syntheticSeriesFor(m);
-    }
-
-    debugPrint(
-        '✅ FEEDBACK: Using REAL swing data - ${swingData!.length} swings');
-    // Extract the appropriate metric from real swing data
-    switch (m) {
-      case GraphMetric.swingSpeed:
-        // Convert m/s to km/h (multiply by 3.6)
-        return swingData!.map((s) => s.maxVtip * 3.6).toList();
-      case GraphMetric.swingForce:
-        // Use impactSeverity as swing force
-        return swingData!.map((s) => s.impactSeverity).toList();
-      case GraphMetric.acceleration:
-        // Use impactAmax as acceleration (m/s²)
-        return swingData!.map((s) => s.impactAmax).toList();
-      case GraphMetric.impactForce:
-        // Use estForceN as impact force (N)
-        return swingData!.map((s) => s.estForceN).toList();
-    }
-  }
-
-  // Fallback synthetic data when no real swings available
-  List<double> _syntheticSeriesFor(GraphMetric m) {
-    final impactAvg = session.sweetSpotPct * 100;
-    final accelAvg = session.consistencyPct * 100;
-
-    double base;
-    switch (m) {
-      case GraphMetric.swingSpeed:
-        base = session.avgSpeedKmh.toDouble();
-        break;
-      case GraphMetric.swingForce:
-        base = (impactAvg + accelAvg) / 2;
-        break;
-      case GraphMetric.acceleration:
-        base = accelAvg;
-        break;
-      case GraphMetric.impactForce:
-        base = impactAvg;
-        break;
-    }
-
-    const count = 18;
-    return List<double>.generate(count, (i) {
-      final t = i / (count - 1); // 0 → 1 across session time
-      final bump = 0.1 * (1 - (2 * t - 1) * (2 * t - 1)); // small smooth arch
-      return base * (0.9 + bump);
-    });
-  }
-
-  void _openFullScreenChart(BuildContext context) {
-    final label = _metricLabel(metric);
-    final unit = _metricUnit(metric);
-
-    // Create chart data from swing entities
-    final chartData = swingData != null && swingData!.isNotEmpty
-        ? FeedbackTabChartData(swings: swingData!, metric: metric)
-        : null;
-
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: .7),
-      builder: (ctx) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
-          child: LayoutBuilder(
-            builder: (ctx, constraints) {
-              final maxWidth = constraints.maxWidth.clamp(0.0, 520.0);
-              final dialogBg = isDark ? const Color(0xFF020617) : Colors.white;
-
-              return Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: maxWidth),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: dialogBg,
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(
-                        color: isDark
-                            ? Colors.white.withValues(alpha: .18)
-                            : const Color(0xFFE5E7EB),
-                      ),
-                    ),
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '$label over session',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: primaryText,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                Icons.close_rounded,
-                                color: secondaryText,
-                              ),
-                              onPressed: () => Navigator.of(ctx).pop(),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: 280,
-                          width: double.infinity,
-                          child: chartData != null && chartData.hasData
-                              ? InteractiveLineChart(
-                                  dataPoints: chartData.dataPoints,
-                                  yUnit: unit,
-                                  configuration: ChartConfiguration.detailed(),
-                                )
-                              : Center(
-                                  child: Text(
-                                    'No swing data available',
-                                    style: TextStyle(
-                                      color: secondaryText,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final label = _metricLabel(metric);
     final unit = _metricUnit(metric);
-    final series = _seriesFor(metric);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
@@ -1378,136 +1224,40 @@ class _GraphSection extends StatelessWidget {
           const SizedBox(height: 12),
 
           Text(
-            '$label trend ($unit)',
+            '$label over session',
             style: TextStyle(
               color: secondaryText,
               fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
 
-          // Clickable chart area
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(18),
-              onTap: () => _openFullScreenChart(context),
-              child: SizedBox(
-                height: 140,
-                width: double.infinity,
-                child: _MiniBarChart(
-                  values: series,
-                  lineColor: isDark
-                      ? Colors.white.withValues(alpha: .9)
-                      : const Color(0xFF1F2937),
-                  fillColor: isDark
-                      ? Colors.white.withValues(alpha: .12)
-                      : const Color(0xFFE5E7EB),
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 4),
-          Text(
-            'Tap the chart to expand',
-            style: TextStyle(
-              color: secondaryText.withValues(alpha: .8),
-              fontSize: 11,
-            ),
+          // Full interactive chart (no mini preview)
+          SizedBox(
+            height: 280,
+            width: double.infinity,
+            child: swingData != null && swingData!.isNotEmpty
+                ? InteractiveLineChart(
+                    dataPoints: FeedbackTabChartData(
+                      swings: swingData!,
+                      metric: metric,
+                    ).dataPoints,
+                    yUnit: unit,
+                    configuration: ChartConfiguration.detailed(),
+                  )
+                : Center(
+                    child: Text(
+                      'No swing data available',
+                      style: TextStyle(
+                        color: secondaryText,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
           ),
         ],
       ),
     );
-  }
-}
-
-class _MiniBarChart extends StatelessWidget {
-  const _MiniBarChart({
-    required this.values,
-    required this.lineColor,
-    required this.fillColor,
-  });
-
-  final List<double> values;
-  final Color lineColor;
-  final Color fillColor;
-
-  @override
-  Widget build(BuildContext context) {
-    if (values.isEmpty) {
-      return const Center(child: Text('No data'));
-    }
-
-    final minV = values.reduce((a, b) => a < b ? a : b);
-    final maxV = values.reduce((a, b) => a > b ? a : b);
-    final double range = (maxV - minV).clamp(1e-6, double.infinity);
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final w = constraints.maxWidth;
-        final h = constraints.maxHeight;
-        final step = values.length > 1 ? w / (values.length - 1) : 0.0;
-
-        final points = <Offset>[];
-        for (var i = 0; i < values.length; i++) {
-          final x = i * step;
-          final norm = (values[i] - minV) / range;
-          final y = h - norm * (h - 12); // top padding
-          points.add(Offset(x, y));
-        }
-
-        return CustomPaint(
-          painter: _MiniChartPainter(
-            points: points,
-            lineColor: lineColor,
-            fillColor: fillColor,
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _MiniChartPainter extends CustomPainter {
-  _MiniChartPainter({
-    required this.points,
-    required this.lineColor,
-    required this.fillColor,
-  });
-
-  final List<Offset> points;
-  final Color lineColor;
-  final Color fillColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (points.length < 2) return;
-
-    final fillPath = Path()
-      ..moveTo(points.first.dx, size.height)
-      ..addPolygon(points, false)
-      ..lineTo(points.last.dx, size.height)
-      ..close();
-
-    final fillPaint = Paint()
-      ..color = fillColor
-      ..style = PaintingStyle.fill;
-    canvas.drawPath(fillPath, fillPaint);
-
-    final linePaint = Paint()
-      ..color = lineColor
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    canvas.drawPoints(ui.PointMode.polygon, points, linePaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _MiniChartPainter oldDelegate) {
-    return oldDelegate.points != points ||
-        oldDelegate.lineColor != lineColor ||
-        oldDelegate.fillColor != fillColor;
   }
 }

@@ -110,26 +110,30 @@ class _StatsTabState extends State<StatsTab> {
   List<double> _getSparklineData(String metric) {
     if (_allSwings.isEmpty) return [];
 
-    return _allSwings.map<double>((swing) {
-      final value = switch (metric) {
+    // Extract all values first
+    final values = _allSwings.map<double>((swing) {
+      return switch (metric) {
         'speed' => swing.maxVtip * 3.6, // m/s to km/h
         'force' => swing.estForceN,
         'accel' => swing.impactAmax,
         'sforce' => swing.impactSeverity,
         _ => 0.0,
       };
-
-      // Normalize to 0-1 range
-      final (min, max) = switch (metric) {
-        'speed' => (80.0, 240.0),
-        'force' => (20.0, 120.0),
-        'accel' => (5.0, 45.0),
-        'sforce' => (10.0, 80.0),
-        _ => (0.0, 100.0),
-      };
-
-      return ((value - min) / (max - min)).clamp(0.0, 1.0);
     }).toList();
+
+    // Find actual min/max from data for better visualization
+    final minValue = values.reduce((a, b) => a < b ? a : b);
+    final maxValue = values.reduce((a, b) => a > b ? a : b);
+
+    // If all values are the same, return flat line at 0.5
+    if (minValue == maxValue) {
+      return List.filled(values.length, 0.5);
+    }
+
+    final range = maxValue - minValue;
+
+    // Normalize using actual data range
+    return values.map((v) => ((v - minValue) / range).clamp(0.0, 1.0)).toList();
   }
 
   Map<String, num> _stats(String metric) {

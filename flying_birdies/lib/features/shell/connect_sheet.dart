@@ -134,6 +134,14 @@ class _ConnectSheetState extends State<_ConnectSheet> {
     }
 
     try {
+      // If already connected to a different device, disconnect first
+      if (_connected && _bleService.isConnected) {
+        debugPrint(
+            'Disconnecting from current device before connecting to new one');
+        await _bleService.disconnect();
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+
       // Use REAL BLE connection
       await _bleService.connectToDevice(_selected!.id);
 
@@ -294,7 +302,7 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                   ),
 
                   // Content - wrapped in scrollable area with proper constraints
-                  Flexible(
+                  Expanded(
                     child: SingleChildScrollView(
                       physics: const BouncingScrollPhysics(),
                       child: Padding(
@@ -448,12 +456,11 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                                       child: _DeviceRow(
                                         device: d,
                                         selected: _selected?.id == d.id,
-                                        onTap: () async {
+                                        onTap: () {
+                                          // Only select the device, don't connect yet
                                           if (mounted) {
                                             setState(() => _selected = d);
                                           }
-                                          // Connect immediately when device is tapped
-                                          await _connect();
                                         },
                                       ),
                                     ),
@@ -518,50 +525,58 @@ class _ConnectSheetState extends State<_ConnectSheet> {
                                 ),
                               ),
                             ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
 
-                            const SizedBox(height: 16),
-
-                            // CTA
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  elevation: 0,
-                                  padding: EdgeInsets.zero,
-                                  backgroundColor: Colors.transparent,
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14)),
-                                ),
-                                onPressed: _ctaAction,
-                                child: Ink(
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(14),
-                                    gradient: const LinearGradient(
-                                        colors: AppTheme.gCTA),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color:
-                                            Colors.black.withValues(alpha: .30),
-                                        blurRadius: 16,
-                                        offset: const Offset(0, 10),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Container(
-                                    alignment: Alignment.center,
-                                    height: 52,
-                                    child: Text(
-                                      _ctaText,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                  // CTA Button - Fixed at bottom
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .04),
+                      border: Border(
+                        top: BorderSide(
+                          color: Colors.white.withValues(alpha: .06),
+                        ),
+                      ),
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          elevation: 0,
+                          padding: EdgeInsets.zero,
+                          backgroundColor: Colors.transparent,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                        onPressed: _ctaAction,
+                        child: Ink(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            gradient:
+                                const LinearGradient(colors: AppTheme.gCTA),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: .30),
+                                blurRadius: 16,
+                                offset: const Offset(0, 10),
+                              ),
+                            ],
+                          ),
+                          child: Container(
+                            alignment: Alignment.center,
+                            height: 52,
+                            child: Text(
+                              _ctaText,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),

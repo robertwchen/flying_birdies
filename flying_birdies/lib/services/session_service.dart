@@ -7,6 +7,7 @@ import '../core/exceptions.dart';
 import '../models/entities/session_entity.dart';
 import '../models/entities/swing_entity.dart';
 import '../models/swing_metrics.dart';
+import '../models/session_summary.dart';
 
 /// Session Service for managing training sessions
 class SessionService implements ISessionService {
@@ -157,6 +158,63 @@ class SessionService implements ISessionService {
     }
   }
 
+  /// Private helper to calculate session summary from session and swings
+  SessionSummary _calculateSessionSummary(
+    SessionEntity session,
+    List<SwingEntity> swings,
+  ) {
+    // Calculate statistics
+    int swingCount = swings.length;
+    double avgSpeedKmh = 0;
+    double maxSpeedKmh = 0;
+    double avgForceN = 0;
+    double maxForceN = 0;
+    double avgAccelMs2 = 0;
+    double maxAccelMs2 = 0;
+
+    if (swings.isNotEmpty) {
+      // Speed metrics (convert m/s to km/h)
+      avgSpeedKmh = swings.map((s) => s.maxVtip * 3.6).reduce((a, b) => a + b) /
+          swings.length;
+      maxSpeedKmh =
+          swings.map((s) => s.maxVtip * 3.6).reduce((a, b) => a > b ? a : b);
+
+      // Force metrics
+      avgForceN = swings.map((s) => s.estForceN).reduce((a, b) => a + b) /
+          swings.length;
+      maxForceN =
+          swings.map((s) => s.estForceN).reduce((a, b) => a > b ? a : b);
+
+      // Acceleration metrics
+      avgAccelMs2 = swings.map((s) => s.impactAmax).reduce((a, b) => a + b) /
+          swings.length;
+      maxAccelMs2 =
+          swings.map((s) => s.impactAmax).reduce((a, b) => a > b ? a : b);
+    }
+
+    // Calculate duration
+    int durationMinutes = 0;
+    if (session.endTime != null) {
+      durationMinutes =
+          session.endTime!.difference(session.startTime).inMinutes;
+    }
+
+    return SessionSummary(
+      sessionId: session.id!,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      strokeFocus: session.strokeFocus,
+      swingCount: swingCount,
+      avgSpeedKmh: avgSpeedKmh,
+      maxSpeedKmh: maxSpeedKmh,
+      avgForceN: avgForceN,
+      maxForceN: maxForceN,
+      avgAccelMs2: avgAccelMs2,
+      maxAccelMs2: maxAccelMs2,
+      durationMinutes: durationMinutes,
+    );
+  }
+
   @override
   Future<List<SessionSummary>> getRecentSessions({int limit = 50}) async {
     try {
@@ -167,47 +225,7 @@ class SessionService implements ISessionService {
 
       for (final session in sessions) {
         final swings = await _swingRepo.getSwingsForSession(session.id!);
-
-        // Calculate statistics
-        int swingCount = swings.length;
-        double avgSpeed = 0;
-        double avgForce = 0;
-        double maxSpeed = 0;
-        double maxForce = 0;
-
-        if (swings.isNotEmpty) {
-          // Convert m/s to km/h for display (multiply by 3.6)
-          avgSpeed =
-              swings.map((s) => s.maxVtip * 3.6).reduce((a, b) => a + b) /
-                  swings.length;
-          avgForce = swings.map((s) => s.estForceN).reduce((a, b) => a + b) /
-              swings.length;
-          maxSpeed = swings
-              .map((s) => s.maxVtip * 3.6)
-              .reduce((a, b) => a > b ? a : b);
-          maxForce =
-              swings.map((s) => s.estForceN).reduce((a, b) => a > b ? a : b);
-        }
-
-        // Calculate duration
-        int durationMinutes = 0;
-        if (session.endTime != null) {
-          durationMinutes =
-              session.endTime!.difference(session.startTime).inMinutes;
-        }
-
-        summaries.add(SessionSummary(
-          sessionId: session.id!,
-          startTime: session.startTime,
-          endTime: session.endTime,
-          strokeFocus: session.strokeFocus,
-          swingCount: swingCount,
-          avgSpeed: avgSpeed,
-          avgForce: avgForce,
-          maxSpeed: maxSpeed,
-          maxForce: maxForce,
-          durationMinutes: durationMinutes,
-        ));
+        summaries.add(_calculateSessionSummary(session, swings));
       }
 
       _logger.debug('Retrieved ${summaries.length} session summaries');
@@ -258,44 +276,8 @@ class SessionService implements ISessionService {
         );
       }).toList();
 
-      // Calculate statistics
-      int swingCount = swings.length;
-      double avgSpeed = 0;
-      double avgForce = 0;
-      double maxSpeed = 0;
-      double maxForce = 0;
-
-      if (swings.isNotEmpty) {
-        // Convert m/s to km/h for display (multiply by 3.6)
-        avgSpeed = swings.map((s) => s.maxVtip * 3.6).reduce((a, b) => a + b) /
-            swings.length;
-        avgForce = swings.map((s) => s.estForceN).reduce((a, b) => a + b) /
-            swings.length;
-        maxSpeed =
-            swings.map((s) => s.maxVtip * 3.6).reduce((a, b) => a > b ? a : b);
-        maxForce =
-            swings.map((s) => s.estForceN).reduce((a, b) => a > b ? a : b);
-      }
-
-      // Calculate duration
-      int durationMinutes = 0;
-      if (session.endTime != null) {
-        durationMinutes =
-            session.endTime!.difference(session.startTime).inMinutes;
-      }
-
-      final summary = SessionSummary(
-        sessionId: session.id!,
-        startTime: session.startTime,
-        endTime: session.endTime,
-        strokeFocus: session.strokeFocus,
-        swingCount: swingCount,
-        avgSpeed: avgSpeed,
-        avgForce: avgForce,
-        maxSpeed: maxSpeed,
-        maxForce: maxForce,
-        durationMinutes: durationMinutes,
-      );
+      // Use shared calculation method
+      final summary = _calculateSessionSummary(session, swingEntities);
 
       _logger.debug('Retrieved session detail with ${swings.length} swings');
       return SessionDetail(summary: summary, swings: swings);

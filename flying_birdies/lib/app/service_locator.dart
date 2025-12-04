@@ -31,6 +31,7 @@ import '../core/interfaces/i_connection_persistence_service.dart';
 import '../state/connection_state_notifier.dart';
 import '../state/session_state_notifier.dart';
 import '../state/swing_data_notifier.dart';
+import '../state/player_settings_notifier.dart';
 
 /// Service Locator for Dependency Injection
 /// Sets up all providers for the app
@@ -65,6 +66,7 @@ class ServiceLocator {
     final connectionStateNotifier = ConnectionStateNotifier();
     final sessionStateNotifier = SessionStateNotifier();
     final swingDataNotifier = SwingDataNotifier();
+    final playerSettingsNotifier = PlayerSettingsNotifier();
 
     // Create connection persistence service
     final connectionPersistenceService = ConnectionPersistenceService(
@@ -120,6 +122,9 @@ class ServiceLocator {
       ),
       ChangeNotifierProvider<SwingDataNotifier>.value(
         value: swingDataNotifier,
+      ),
+      ChangeNotifierProvider<PlayerSettingsNotifier>.value(
+        value: playerSettingsNotifier,
       ),
     ];
   }

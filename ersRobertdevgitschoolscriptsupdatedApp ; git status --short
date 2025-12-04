@@ -1,0 +1,41 @@
+[1mdiff --git a/flying_birdies/lib/features/Train/Train_tab.dart b/flying_birdies/lib/features/Train/Train_tab.dart[m
+[1mindex 017f106..d126ef4 100644[m
+[1m--- a/flying_birdies/lib/features/Train/Train_tab.dart[m
+[1m+++ b/flying_birdies/lib/features/Train/Train_tab.dart[m
+[36m@@ -281,9 +281,11 @@[m [mclass _TrainTabState extends State<TrainTab> {[m
+               ),[m
+             ),[m
+             const Spacer(),[m
+[31m-            _ShotCountPill([m
+[31m-              count: _shotCount,[m
+[31m-              sessionActive: _sessionActive,[m
+[32m+[m[32m            // Session status moved to top right[m
+[32m+[m[32m            _CompactSessionStatus([m
+[32m+[m[32m              isActive: _sessionActive,[m
+[32m+[m[32m              selectedStroke:[m
+[32m+[m[32m                  _selectedKey != null ? _currentStroke.title : null,[m
+             ),[m
+           ],[m
+         ),[m
+[36m@@ -297,9 +299,10 @@[m [mclass _TrainTabState extends State<TrainTab> {[m
+ [m
+         const SizedBox(height: 12),[m
+ [m
+[31m-        _LiveSensorHeroCard([m
+[31m-          isActive: _sessionActive,[m
+[31m-          selectedStroke: _selectedKey != null ? _currentStroke.title : null,[m
+[32m+[m[32m        // Swing count takes center stage[m
+[32m+[m[32m        _SwingCountHeroCard([m
+[32m+[m[32m          count: _shotCount,[m
+[32m+[m[32m          sessionActive: _sessionActive,[m
+         ),[m
+ [m
+         const SizedBox(height: 14),[m
+[36m@@ -504,6 +507,7 @@[m [mclass _LiveSensorHeroCard extends StatelessWidget {[m
+ [m
+   @override[m
+   Widget build(BuildContext context) {[m
+[32m+[m[32m    final isDark = Theme.of(context).brightness == Brightness.dark;[m
+     final statusTitle = isActive ? 'Session live' : 'Session ready';[m
+ [m
+     final statusSubtitle = !isActive[m

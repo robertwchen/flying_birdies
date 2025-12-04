@@ -6,8 +6,8 @@ import 'package:provider/provider.dart';
 
 import '../../widgets/glass_widgets.dart';
 import '../../widgets/charts/charts.dart';
-import '../history/history_tab.dart' show SessionSummary;
-import '../../services/database_service.dart';
+import '../../models/session_summary.dart';
+import '../../core/interfaces/i_session_service.dart';
 import '../../core/interfaces/i_swing_repository.dart';
 import '../../models/entities/swing_entity.dart';
 
@@ -98,7 +98,7 @@ class _FeedbackTabState extends State<FeedbackTab> {
     if (_loading) return; // Prevent concurrent loads
     setState(() => _loading = true);
     try {
-      final loader = widget.loadLatest ?? _mockLatest;
+      final loader = widget.loadLatest ?? _loadLatestSession;
       final latest = await loader();
       if (!mounted) return;
 
@@ -151,38 +151,12 @@ class _FeedbackTabState extends State<FeedbackTab> {
     }
   }
 
-  // Fetch latest session from database
-  Future<SessionSummary?> _mockLatest() async {
+  // Fetch latest session from service layer
+  Future<SessionSummary?> _loadLatestSession() async {
     try {
-      final db = DatabaseService.instance;
-      final sessionMaps = await db.getSessions(limit: 1);
-
-      if (sessionMaps.isEmpty) return null;
-
-      final sessionMap = sessionMaps.first;
-      final sessionId = sessionMap['id'] as int;
-      final swings = await db.getSwingsForSession(sessionId);
-
-      if (swings.isEmpty) return null;
-
-      final avgSpeed = swings.map((s) => s.maxVtipKmh).reduce((a, b) => a + b) /
-          swings.length;
-      final maxSpeed =
-          swings.map((s) => s.maxVtipKmh).reduce((a, b) => a > b ? a : b);
-
-      final startTime =
-          DateTime.fromMillisecondsSinceEpoch(sessionMap['start_time'] as int);
-
-      return SessionSummary(
-        id: sessionId.toString(),
-        date: startTime,
-        title: sessionMap['stroke_focus'] as String? ?? 'Training',
-        avgSpeedKmh: avgSpeed,
-        maxSpeedKmh: maxSpeed,
-        sweetSpotPct: 0.6, // placeholder
-        consistencyPct: 0.7, // placeholder
-        hits: swings.length,
-      );
+      final sessionService = context.read<ISessionService>();
+      final sessions = await sessionService.getRecentSessions(limit: 1);
+      return sessions.isNotEmpty ? sessions.first : null;
     } catch (e) {
       debugPrint('Failed to load latest session: $e');
       return null;
@@ -263,7 +237,7 @@ class _FeedbackTabState extends State<FeedbackTab> {
           body: RefreshIndicator(
             onRefresh: _autoLoad,
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
               children: [
                 if (_loading && !has)
                   _LoadingCard(
@@ -280,7 +254,7 @@ class _FeedbackTabState extends State<FeedbackTab> {
                     secondary: secondaryText,
                   ),
                 if (has) ...[
-                  // Coach Summary
+                  // Coach Summary - compressed
                   _CoachSummaryCard(
                     cardBg: cardBg,
                     border: cardBorder,
@@ -288,9 +262,9 @@ class _FeedbackTabState extends State<FeedbackTab> {
                     secondaryText: secondaryText,
                     lines: _coachLines(_current!, _comparisonTarget()),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
 
-                  // Session graphs – directly after coach summary.
+                  // Session graphs – compressed
                   _GraphSection(
                     session: _current!,
                     swingData: _swingData,
@@ -304,9 +278,9 @@ class _FeedbackTabState extends State<FeedbackTab> {
                     secondaryText: secondaryText,
                     isDark: isDark,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
 
-                  // Metrics grid – 4 metrics (no sweet-spot/consistency labels)
+                  // Metrics grid – compressed
                   _MetricGrid(
                     s: _current!,
                     cardBg: cardBg,
@@ -314,9 +288,9 @@ class _FeedbackTabState extends State<FeedbackTab> {
                     primaryText: primaryText,
                     secondaryText: secondaryText,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
 
-                  // Hits
+                  // Hits - compressed
                   _HitsCard(
                     hits: _current!.hits,
                     cardBg: cardBg,
@@ -324,9 +298,9 @@ class _FeedbackTabState extends State<FeedbackTab> {
                     primaryText: primaryText,
                     secondaryText: secondaryText,
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 12),
 
-                  // Comparison + dropdown
+                  // Comparison + dropdown - compressed
                   Row(
                     children: [
                       Expanded(
@@ -334,8 +308,8 @@ class _FeedbackTabState extends State<FeedbackTab> {
                           'Comparison',
                           style: TextStyle(
                             color: primaryText,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
@@ -389,7 +363,7 @@ class _FeedbackTabState extends State<FeedbackTab> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
 
                   _CompareList(
                     deltas: _deltas(_current!, _comparisonTarget()),
@@ -399,7 +373,7 @@ class _FeedbackTabState extends State<FeedbackTab> {
                     secondaryText: secondaryText,
                     isDark: isDark,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
 
                   _TipsCard(
                     tips: _tipsFor(_current!),
@@ -425,8 +399,8 @@ class _FeedbackTabState extends State<FeedbackTab> {
     // (You’re already labelling them as Impact + Acceleration in the UI.)
     final double avg = cur.avgSpeedKmh;
     final double max = cur.maxSpeedKmh;
-    final double impactAvg = cur.sweetSpotPct * 100;
-    final double accelAvg = cur.consistencyPct * 100;
+    final double impactAvg = cur.avgForceN; // Real impact force (N)
+    final double accelAvg = cur.avgAccelMs2; // Real acceleration (m/s²)
     final int hits = cur.hits;
 
     final bool hasOther = other != null;
@@ -434,9 +408,8 @@ class _FeedbackTabState extends State<FeedbackTab> {
     // Deltas vs comparison target (if any)
     final double dAvg = hasOther ? avg - other.avgSpeedKmh : 0.0;
     final double dMax = hasOther ? max - other.maxSpeedKmh : 0.0;
-    final double dImp = hasOther ? impactAvg - other.sweetSpotPct * 100 : 0.0;
-    final double dAccel =
-        hasOther ? accelAvg - other.consistencyPct * 100 : 0.0;
+    final double dImp = hasOther ? impactAvg - other.avgForceN : 0.0;
+    final double dAccel = hasOther ? accelAvg - other.avgAccelMs2 : 0.0;
     final int dHits = hasOther ? hits - other.hits : 0;
 
     String headline;
@@ -505,9 +478,8 @@ class _FeedbackTabState extends State<FeedbackTab> {
     return {
       'Avg Speed': cur.avgSpeedKmh - other.avgSpeedKmh,
       'Max Speed': cur.maxSpeedKmh - other.maxSpeedKmh,
-      // Again reusing sweetSpot/consistency as impact/accel for now:
-      'Impact force': (cur.sweetSpotPct - other.sweetSpotPct) * 100,
-      'Acceleration': (cur.consistencyPct - other.consistencyPct) * 100,
+      'Impact force': cur.avgForceN - other.avgForceN,
+      'Acceleration': cur.avgAccelMs2 - other.avgAccelMs2,
     };
   }
 
@@ -515,8 +487,8 @@ class _FeedbackTabState extends State<FeedbackTab> {
     final tips = <String>[];
 
     final avg = s.avgSpeedKmh;
-    final impact = s.sweetSpotPct * 100; // TEMP mapping
-    final accel = s.consistencyPct * 100; // TEMP mapping
+    final impact = s.avgForceN; // Real impact force (N)
+    final accel = s.avgAccelMs2; // Real acceleration (m/s²)
 
     // Power
     if (avg < 200) {
@@ -661,10 +633,10 @@ class _CoachSummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: border),
       ),
       child: Column(
@@ -673,33 +645,28 @@ class _CoachSummaryCard extends StatelessWidget {
           Row(
             children: [
               Icon(Icons.workspace_premium_outlined,
-                  size: 22, color: primaryText),
-              const SizedBox(width: 8),
+                  size: 16, color: primaryText),
+              const SizedBox(width: 6),
               Text(
                 'Coach Summary',
                 style: TextStyle(
                   color: primaryText,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            lines.first,
-            style: TextStyle(
-              color: primaryText,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
           const SizedBox(height: 6),
           Text(
-            lines.last,
+            lines.first,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: secondaryText,
-              fontSize: 13,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
             ),
           ),
         ],
@@ -725,25 +692,24 @@ class _MetricGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final impactAvg = s.sweetSpotPct * 100;
-    final accelAvg = s.consistencyPct * 100;
+    // Use REAL values from swing data
+    final impactAvg = s.avgForceN;
+    final impactMax = s.maxForceN;
+    final accelAvg = s.avgAccelMs2;
+    final accelMax = s.maxAccelMs2;
 
-    // Until you have real max values for impact/accel, derive from avg.
-    final impactMax = impactAvg * 1.15;
-    final accelMax = accelAvg * 1.15;
-
-    // TEMP swing-force approximation from impact+accel.
-    final swingForceAvg = (impactAvg + accelAvg) / 2;
-    final swingForceMax = swingForceAvg * 1.15;
+    // Swing force is the same as impact force (est_force_n from database)
+    final swingForceAvg = s.avgForceN;
+    final swingForceMax = s.maxForceN;
 
     return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.1,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        childAspectRatio: 2.0,
       ),
       children: [
         _MetricSummaryTile(
@@ -817,42 +783,40 @@ class _MetricSummaryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: border),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Bigger title font
           Text(
             title,
             style: TextStyle(
               color: primaryText,
-              fontWeight: FontWeight.w900,
-              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
             ),
           ),
-          const SizedBox(height: 12),
-          // Avg
+          const SizedBox(height: 4),
           Text(
             'Avg ${_fmt(avg)} $unit',
             style: TextStyle(
               color: secondaryText,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 6),
-          // Max
+          const SizedBox(height: 2),
           Text(
             'Max ${_fmt(max)} $unit',
             style: TextStyle(
               color: secondaryText,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -879,32 +843,29 @@ class _HitsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          // Make "Hits" the bold hero
           Text(
-            'Hits',
+            'Shot Count',
             style: TextStyle(
               color: primaryText,
-              fontWeight: FontWeight.w900,
-              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
             ),
           ),
-          const SizedBox(height: 6),
-          // Number is still big, but slightly lighter weight
+          const Spacer(),
           Text(
             '$hits',
             style: TextStyle(
               color: secondaryText,
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -983,28 +944,29 @@ class _DeltaRow extends StatelessWidget {
             : const Color(0xFFDC2626)); // red
 
     return Container(
-      height: 48,
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
+      height: 38,
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: border),
       ),
       child: Row(
         children: [
           Icon(
             Icons.trending_up,
-            size: 18,
+            size: 16,
             color: secondaryText,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               label,
               style: TextStyle(
                 color: primaryText,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
               ),
             ),
           ),
@@ -1012,8 +974,8 @@ class _DeltaRow extends StatelessWidget {
             txt,
             style: TextStyle(
               color: color,
-              fontWeight: FontWeight.w900,
-              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
             ),
           ),
         ],
@@ -1042,10 +1004,10 @@ class _TipsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: border),
       ),
       child: Column(
@@ -1055,30 +1017,31 @@ class _TipsCard extends StatelessWidget {
             children: [
               Icon(
                 Icons.lightbulb_outline,
-                size: 20,
+                size: 16,
                 color:
                     isDark ? const Color(0xFFFBBF24) : const Color(0xFFF59E0B),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Text(
                 'Tips',
                 style: TextStyle(
                   color: primaryText,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           ...tips.map(
             (t) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.only(bottom: 3),
               child: Text(
                 '• $t',
                 style: TextStyle(
                   color: secondaryText,
-                  height: 1.35,
+                  fontSize: 11,
+                  height: 1.3,
                 ),
               ),
             ),
@@ -1147,10 +1110,10 @@ class _GraphSection extends StatelessWidget {
     final unit = _metricUnit(metric);
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: border),
       ),
       child: Column(
@@ -1164,8 +1127,8 @@ class _GraphSection extends StatelessWidget {
                   'Session graphs',
                   style: TextStyle(
                     color: primaryText,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
@@ -1221,21 +1184,21 @@ class _GraphSection extends StatelessWidget {
             ],
           ),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           Text(
             '$label over session',
             style: TextStyle(
               color: secondaryText,
-              fontSize: 13,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
-          // Full interactive chart (no mini preview)
+          // Compressed chart
           SizedBox(
-            height: 280,
+            height: 180,
             width: double.infinity,
             child: swingData != null && swingData!.isNotEmpty
                 ? InteractiveLineChart(
@@ -1251,7 +1214,7 @@ class _GraphSection extends StatelessWidget {
                       'No swing data available',
                       style: TextStyle(
                         color: secondaryText,
-                        fontSize: 13,
+                        fontSize: 11,
                       ),
                     ),
                   ),

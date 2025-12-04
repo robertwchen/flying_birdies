@@ -1,5 +1,6 @@
 import 'dart:async';
 import '../../models/swing_metrics.dart';
+import '../../models/session_summary.dart';
 
 /// Session event types
 enum SessionEventType { started, ended, swingRecorded }
@@ -16,33 +17,6 @@ class SessionEvent {
     required this.sessionId,
     required this.timestamp,
     this.data,
-  });
-}
-
-/// Session summary for display
-class SessionSummary {
-  final int sessionId;
-  final DateTime startTime;
-  final DateTime? endTime;
-  final String? strokeFocus;
-  final int swingCount;
-  final double avgSpeed; // km/h
-  final double avgForce; // N
-  final double maxSpeed; // km/h
-  final double maxForce; // N
-  final int durationMinutes;
-
-  const SessionSummary({
-    required this.sessionId,
-    required this.startTime,
-    required this.endTime,
-    required this.strokeFocus,
-    required this.swingCount,
-    required this.avgSpeed,
-    required this.avgForce,
-    required this.maxSpeed,
-    required this.maxForce,
-    required this.durationMinutes,
   });
 }
 

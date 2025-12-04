@@ -82,6 +82,17 @@ class AnalyticsService implements IAnalyticsService {
     }
   }
 
+  /// Test FFT implementation (for debugging)
+  void testFft() {
+    try {
+      _logger.info('Running FFT implementation test');
+      // Access the underlying v12 analyzer through the wrapper
+      _analyzer.testFft();
+    } catch (e, stackTrace) {
+      _logger.error('Error running FFT test', error: e, stackTrace: stackTrace);
+    }
+  }
+
   @override
   void dispose() {
     _logger.info('Disposing AnalyticsService');

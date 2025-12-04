@@ -26,7 +26,7 @@ abstract class IBleService {
   Stream<DiscoveredDevice> scanForDevices({Duration timeout});
 
   /// Connect to a specific device
-  Future<void> connectToDevice(String deviceId);
+  Future<void> connectToDevice(String deviceId, {String? deviceName});
 
   /// Disconnect from current device
   Future<void> disconnect();

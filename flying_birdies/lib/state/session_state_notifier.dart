@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../core/interfaces/i_session_service.dart';
+import '../models/session_summary.dart';
 
 /// Session event for stream
 enum SessionEventType { started, ended, swingRecorded, listUpdated }

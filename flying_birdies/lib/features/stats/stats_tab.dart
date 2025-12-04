@@ -194,17 +194,15 @@ class _StatsTabState extends State<StatsTab> {
           const SizedBox(height: 12),
 
           // Time range pills
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _pill('Daily', TimeRange.daily),
-                _pill('Weekly', TimeRange.weekly),
-                _pill('Monthly', TimeRange.monthly),
-                _pill('Yearly', TimeRange.yearly),
-                _pill('All', TimeRange.all),
-              ],
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _pill('Daily', TimeRange.daily),
+              _pill('Weekly', TimeRange.weekly),
+              _pill('Monthly', TimeRange.monthly),
+              _pill('Yearly', TimeRange.yearly),
+              _pill('All', TimeRange.all),
+            ],
           ),
           const SizedBox(height: 12),
 
@@ -240,7 +238,7 @@ class _StatsTabState extends State<StatsTab> {
               color: const Color(0xFFFF7AE0),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
 
           _MetricCard(
             heroTag: 'metric-force',
@@ -260,7 +258,7 @@ class _StatsTabState extends State<StatsTab> {
               color: const Color(0xFFFFB86B),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
 
           _MetricCard(
             heroTag: 'metric-accel',
@@ -280,7 +278,7 @@ class _StatsTabState extends State<StatsTab> {
               color: const Color(0xFF9AE6B4),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
 
           _MetricCard(
             heroTag: 'metric-swingforce',
@@ -326,50 +324,47 @@ class _StatsTabState extends State<StatsTab> {
             ? Colors.white.withValues(alpha: .85)
             : const Color(0xFF4B5563));
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 10),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () {
-            setState(() => _range = r);
-            _loadRealData();
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: selected ? bgSelected : bg,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: selected ? borderSelected : border,
-              ),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: .22),
-                        blurRadius: 10,
-                        offset: const Offset(0, 6),
-                      )
-                    ]
-                  : (isDark
-                      ? null
-                      : [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: .06),
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          )
-                        ]),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          setState(() => _range = r);
+          _loadRealData();
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? bgSelected : bg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? borderSelected : border,
             ),
-            child: Text(
-              label,
-              style: TextStyle(
-                color: labelColor,
-                fontWeight: FontWeight.w800,
-                fontSize: 14,
-                letterSpacing: .1,
-              ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: .22),
+                      blurRadius: 10,
+                      offset: const Offset(0, 6),
+                    )
+                  ]
+                : (isDark
+                    ? null
+                    : [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: .06),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        )
+                      ]),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: labelColor,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+              letterSpacing: 0,
             ),
           ),
         ),
@@ -449,7 +444,7 @@ class _MetricCard extends StatelessWidget {
       onTap: onOpen,
       borderRadius: BorderRadius.circular(18),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+        padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           color: bg,
@@ -471,28 +466,28 @@ class _MetricCard extends StatelessWidget {
                 children: [
                   Row(children: [
                     Container(
-                      width: 34,
-                      height: 34,
+                      width: 32,
+                      height: 32,
                       decoration: BoxDecoration(
                         color: iconBg,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Icon(icon, size: 18, color: iconColor),
+                      child: Icon(icon, size: 17, color: iconColor),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 9),
                     Text(
                       title,
                       style: TextStyle(
                         color: titleColor,
                         fontWeight: FontWeight.w800,
-                        fontSize: 18,
+                        fontSize: 17,
                       ),
                     ),
                   ]),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   Wrap(
-                    spacing: 18,
-                    runSpacing: 6,
+                    spacing: 16,
+                    runSpacing: 5,
                     children: [
                       _Kpi(
                         label: 'Max',
@@ -521,8 +516,8 @@ class _MetricCard extends StatelessWidget {
             Hero(
               tag: heroTag,
               child: SizedBox(
-                width: 118,
-                height: 78,
+                width: 105,
+                height: 68,
                 child: _Sparkline(series: series),
               ),
             ),
@@ -555,16 +550,16 @@ class _Kpi extends StatelessWidget {
           style: TextStyle(
             color: color,
             fontWeight: FontWeight.w700,
-            fontSize: 12,
+            fontSize: 11,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 3),
         Text(
           value,
           style: TextStyle(
             color: titleColor,
             fontWeight: FontWeight.w800,
-            fontSize: 18,
+            fontSize: 16,
           ),
         ),
       ],

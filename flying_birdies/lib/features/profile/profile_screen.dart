@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../app/theme_controller.dart';
 import '../../services/local_auth.dart';
 import '../../services/database_service.dart';
+import '../../state/player_settings_notifier.dart';
 import '../auth/login_screen.dart';
 
 enum Handedness { left, right }
@@ -98,6 +100,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final name = prefs.getString('player_name');
     final email = prefs.getString('player_email');
     final colorIndex = prefs.getInt('player_avatar_color') ?? 0;
+    final handedness = prefs.getString('player_handedness') ?? 'right';
 
     if (!mounted) return;
     setState(() {
@@ -106,6 +109,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _avatarColorIndex = (colorIndex >= 0 && colorIndex < _avatarColors.length)
           ? colorIndex
           : 0;
+      _hand = handedness == 'left' ? Handedness.left : Handedness.right;
     });
 
     _nameController.text = _displayName;
@@ -121,6 +125,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('player_avatar_color', index);
     setState(() => _avatarColorIndex = index);
+  }
+
+  Future<void> _saveHandedness(Handedness hand) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'player_handedness',
+      hand == Handedness.left ? 'left' : 'right',
+    );
+    setState(() => _hand = hand);
+
+    // Update the notifier so other screens react immediately
+    if (mounted) {
+      final playerSettings = context.read<PlayerSettingsNotifier>();
+      await playerSettings.setHandedness(hand == Handedness.right);
+    }
   }
 
   // --- display helpers -------------------------------------------------------
@@ -466,7 +485,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   groupValue: _hand,
                   onChanged: (h) {
                     if (h != null) {
-                      setState(() => _hand = h);
+                      _saveHandedness(h);
                     }
                   },
                 ),
@@ -477,7 +496,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   groupValue: _hand,
                   onChanged: (h) {
                     if (h != null) {
-                      setState(() => _hand = h);
+                      _saveHandedness(h);
                     }
                   },
                 ),

@@ -58,4 +58,9 @@ class SwingAnalyzerV2 {
       'bufferSize': (stats['bufferSize'] as int).toDouble(),
     };
   }
+
+  /// Test FFT implementation (for debugging)
+  void testFft() {
+    _v12Analyzer.testFftImplementation();
+  }
 }

@@ -142,8 +142,9 @@ class _ConnectSheetState extends State<_ConnectSheet> {
         await Future.delayed(const Duration(milliseconds: 300));
       }
 
-      // Use REAL BLE connection
-      await _bleService.connectToDevice(_selected!.id);
+      // Use REAL BLE connection with device name
+      await _bleService.connectToDevice(_selected!.id,
+          deviceName: _selected!.name);
 
       // Wait a moment for connection to stabilize
       await Future.delayed(const Duration(milliseconds: 500));
@@ -237,7 +238,7 @@ class _ConnectSheetState extends State<_ConnectSheet> {
   String get _bannerSubtitle {
     if (_connected) return 'You\'re ready to train';
     if (_scanning) return 'Keep your sensor powered on';
-    if (_devices.isEmpty) return 'Make sure your sensor is on';
+    if (_devices.isEmpty) return 'Make sure your sensor is on.';
     return 'Tap a device below to pair & connect';
   }
 

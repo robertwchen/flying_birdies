@@ -33,6 +33,9 @@ dependencies:
   
   # State Management & Dependency Injection
   provider: ^6.1.2
+  
+  # FFT for signal processing
+  fftea: ^1.0.1
 
 dev_dependencies:
   flutter_test:

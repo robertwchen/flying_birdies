@@ -359,15 +359,26 @@ class _HomeTab extends StatelessWidget {
         Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0x332F1A77), Color(0x333560A8)],
+              colors: isDark
+                  ? [const Color(0x332F1A77), const Color(0x333560A8)]
+                  : [
+                      const Color(0xFF6B21A8),
+                      const Color(0xFF4338CA)
+                    ], // Darker purple gradient for light mode
             ),
-            border: Border.all(color: Colors.white.withValues(alpha: .10)),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: .10)
+                  : Colors.white.withValues(alpha: .20),
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: .25),
+                color: isDark
+                    ? Colors.black.withValues(alpha: .25)
+                    : Colors.black.withValues(alpha: .15),
                 blurRadius: 20,
                 offset: const Offset(0, 10),
               ),

@@ -124,17 +124,35 @@ class DatabaseHelper {
 
     try {
       if (oldVersion < 2) {
-        // Add cloud_session_id and synced columns to sessions table
-        await db
-            .execute('ALTER TABLE sessions ADD COLUMN cloud_session_id TEXT');
-        await db.execute(
-            'ALTER TABLE sessions ADD COLUMN synced INTEGER DEFAULT 0');
-        await db
-            .execute('CREATE INDEX idx_sessions_synced ON sessions(synced)');
-        await db.execute(
-            'CREATE INDEX idx_sessions_cloud_id ON sessions(cloud_session_id)');
-        _logger.info(
-            'Added cloud_session_id and synced columns to sessions table');
+        // Check if columns already exist before adding them
+        final columns = await _getTableColumns(db, 'sessions');
+
+        if (!columns.contains('cloud_session_id')) {
+          await db
+              .execute('ALTER TABLE sessions ADD COLUMN cloud_session_id TEXT');
+          _logger.info('Added cloud_session_id column to sessions table');
+        } else {
+          _logger.info('cloud_session_id column already exists, skipping');
+        }
+
+        if (!columns.contains('synced')) {
+          await db.execute(
+              'ALTER TABLE sessions ADD COLUMN synced INTEGER DEFAULT 0');
+          _logger.info('Added synced column to sessions table');
+        } else {
+          _logger.info('synced column already exists, skipping');
+        }
+
+        // Create indexes if they don't exist (SQLite ignores if exists)
+        try {
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_sessions_synced ON sessions(synced)');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_sessions_cloud_id ON sessions(cloud_session_id)');
+        } catch (e) {
+          _logger.warning('Index creation skipped (may already exist)',
+              context: {'error': e.toString()});
+        }
       }
 
       _logger.info('Database upgrade completed successfully');
@@ -165,6 +183,12 @@ class DatabaseHelper {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  /// Get list of columns in a table
+  Future<List<String>> _getTableColumns(Database db, String tableName) async {
+    final result = await db.rawQuery('PRAGMA table_info($tableName)');
+    return result.map((row) => row['name'] as String).toList();
   }
 
   /// Close database

@@ -165,11 +165,26 @@ class InteractiveLineChart extends StatelessWidget {
 
             // Y-axis (left)
             leftTitles: AxisTitles(
+              axisNameWidget: Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(
+                  yUnit,
+                  style: theme.axisLabelStyle.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              axisNameSize: 24,
               sideTitles: SideTitles(
                 showTitles: true,
-                reservedSize: 50,
+                reservedSize: 40,
                 interval: _calculateGridInterval(effectiveMinY, effectiveMaxY),
                 getTitlesWidget: (value, meta) {
+                  // Skip the last label if it's too close to maxY to avoid duplication
+                  if ((effectiveMaxY - value).abs() < 0.01) {
+                    return const SizedBox.shrink();
+                  }
                   return _buildYAxisLabel(value, theme);
                 },
               ),
@@ -299,11 +314,14 @@ class InteractiveLineChart extends StatelessWidget {
 
   /// Build Y-axis label widget
   Widget _buildYAxisLabel(double value, ChartTheme theme) {
-    return Text(
-      '${value.toInt()} $yUnit',
-      style: theme.axisLabelStyle,
-      textAlign: TextAlign.right,
-      textScaler: TextScaler.noScaling, // Prevent excessive scaling in charts
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Text(
+        '${value.toInt()}',
+        style: theme.axisLabelStyle,
+        textAlign: TextAlign.right,
+        textScaler: TextScaler.noScaling, // Prevent excessive scaling in charts
+      ),
     );
   }
 
@@ -314,8 +332,8 @@ class InteractiveLineChart extends StatelessWidget {
     final range = maxY - minY;
     if (range <= 0) return 10;
 
-    // Aim for 5 grid lines
-    final rawInterval = range / 5;
+    // Aim for 4 grid lines to avoid overlap at top
+    final rawInterval = range / 4;
 
     // Round to nice numbers (1, 2, 5, 10, 20, 50, 100, etc.)
     final magnitude = pow(10, (log(rawInterval) / ln10).floor()).toDouble();

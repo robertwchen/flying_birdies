@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../feedback/feedback_tab.dart';
-import '../../services/database_service.dart';
+import '../../core/interfaces/i_session_service.dart';
+import '../../models/session_summary.dart';
 import '../../state/session_state_notifier.dart';
 
 class HistoryTab extends StatefulWidget {
@@ -11,7 +12,8 @@ class HistoryTab extends StatefulWidget {
 }
 
 class _HistoryTabState extends State<HistoryTab> {
-  final DatabaseService _db = DatabaseService.instance;
+  late final ISessionService _sessionService;
+
   DateTime _focusedMonth =
       DateTime(DateTime.now().year, DateTime.now().month, 1);
   DateTime _selectedDay = DateTime.now();
@@ -25,6 +27,7 @@ class _HistoryTabState extends State<HistoryTab> {
   @override
   void initState() {
     super.initState();
+    _sessionService = context.read<ISessionService>();
     _loadAllSessions();
   }
 
@@ -55,42 +58,19 @@ class _HistoryTabState extends State<HistoryTab> {
     setState(() => _loading = true);
 
     try {
-      final sessionMaps = await _db.getSessions(limit: 100);
-      final sessions = <SessionSummary>[];
+      // Use service layer - no manual calculations needed!
+      final sessions = await _sessionService.getRecentSessions(limit: 100);
+
+      // Calculate summary statistics
       final uniqueDays = <String>{};
       int totalHits = 0;
 
-      for (final sessionMap in sessionMaps) {
-        final sessionId = sessionMap['id'] as int;
-        final swings = await _db.getSwingsForSession(sessionId);
-
-        if (swings.isNotEmpty) {
-          final avgSpeed =
-              swings.map((s) => s.maxVtipKmh).reduce((a, b) => a + b) /
-                  swings.length;
-          final maxSpeed =
-              swings.map((s) => s.maxVtipKmh).reduce((a, b) => a > b ? a : b);
-
-          final startTime = DateTime.fromMillisecondsSinceEpoch(
-              sessionMap['start_time'] as int);
-
-          // Track unique days
-          final dayKey =
-              '${startTime.year}-${startTime.month}-${startTime.day}';
-          uniqueDays.add(dayKey);
-          totalHits += swings.length;
-
-          sessions.add(SessionSummary(
-            id: sessionId.toString(),
-            date: startTime,
-            title: sessionMap['stroke_focus'] as String? ?? 'Training',
-            avgSpeedKmh: avgSpeed,
-            maxSpeedKmh: maxSpeed,
-            sweetSpotPct: 0.6, // placeholder
-            consistencyPct: 0.7, // placeholder
-            hits: swings.length,
-          ));
-        }
+      for (final session in sessions) {
+        // Track unique days
+        final dayKey =
+            '${session.startTime.year}-${session.startTime.month}-${session.startTime.day}';
+        uniqueDays.add(dayKey);
+        totalHits += session.swingCount;
       }
 
       setState(() {
@@ -148,8 +128,8 @@ class _HistoryTabState extends State<HistoryTab> {
         else
           _StatRow(items: [
             _TopStat(label: 'Sessions', value: '$_totalSessions'),
-            _TopStat(label: 'Active days', value: '$_activeDays'),
-            _TopStat(label: 'Total hits', value: '$_totalHits'),
+            _TopStat(label: 'Active Days', value: '$_activeDays'),
+            _TopStat(label: 'Total Hits', value: '$_totalHits'),
           ]),
         const SizedBox(height: 18),
         _MonthCard(
@@ -266,9 +246,12 @@ class _StatRow extends StatelessWidget {
                   children: [
                     Text(
                       e.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: labelColor,
                         fontWeight: FontWeight.w700,
+                        fontSize: 13,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -583,27 +566,5 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
-/* ───────── Simple model ───────── */
-
-class SessionSummary {
-  /// Full DateTime of the session (start time).
-  final String id;
-  final DateTime date;
-  final String title;
-  final double avgSpeedKmh;
-  final double maxSpeedKmh;
-  final double sweetSpotPct; // 0–1
-  final double consistencyPct; // 0–1
-  final int hits;
-
-  SessionSummary({
-    required this.id,
-    required this.date,
-    required this.title,
-    required this.avgSpeedKmh,
-    required this.maxSpeedKmh,
-    required this.sweetSpotPct,
-    required this.consistencyPct,
-    required this.hits,
-  });
-}
+// SessionSummary model now imported from lib/models/session_summary.dart
+// All session data comes from ISessionService - no manual calculations in UI!

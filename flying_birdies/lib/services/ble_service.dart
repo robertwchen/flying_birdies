@@ -51,6 +51,7 @@ class BleService implements IBleService {
   StreamSubscription<ConnectionStateUpdate>? _connectionSubscription;
   final List<StreamSubscription> _characteristicSubscriptions = [];
   String? _connectedDeviceId;
+  String? _connectedDeviceName;
   DeviceConnectionState _connectionState = DeviceConnectionState.disconnected;
   Timer? _connectionMonitor;
   bool _intentionalDisconnect = false;
@@ -149,9 +150,14 @@ class BleService implements IBleService {
 
   /// Connect to a device
   @override
-  Future<void> connectToDevice(String deviceId) async {
+  Future<void> connectToDevice(String deviceId, {String? deviceName}) async {
     try {
       _logger.info('Connecting to device', context: {'deviceId': deviceId});
+
+      // Store device name if provided
+      if (deviceName != null) {
+        _connectedDeviceName = deviceName;
+      }
       await disconnect();
 
       _intentionalDisconnect = false;
@@ -181,7 +187,7 @@ class BleService implements IBleService {
             _connectionStateNotifier?.updateConnectionState(
               DeviceConnectionState.connected,
               deviceId: deviceId,
-              deviceName: 'StrikePro Sensor',
+              deviceName: _connectedDeviceName ?? 'Unknown Device',
             );
 
             await _discoverServices(deviceId);
